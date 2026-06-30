@@ -1,160 +1,159 @@
-# Architecture Zero-Trust -Streaming HLS Chiffré AES-128 sur Azure
+# Zero-Trust HLS — Streaming vidéo chiffré sur Azure (sans ACR)
+
+Démo pédagogique : une page web permet d'**uploader une vidéo**, qui est
+automatiquement **découpée en segments HLS** et **chiffrée en AES‑128**.
+Chaque segment chiffré est stocké publiquement (inutile de le protéger,
+il est illisible sans clé), et la **clé n'est délivrée qu'après vérification
+d'un jeton JWT**, elle-même stockée dans **Azure Key Vault** et jamais
+codée en dur nulle part.
+
+Aucun **Azure Container Registry** n'est utilisé : le Container App démarre
+sur l'image publique `node:20-alpine`, télécharge le code applicatif (un
+simple `.zip` déposé dans Blob Storage par Terraform) et installe `ffmpeg`
+au démarrage. Tout se déploie depuis **Azure Cloud Shell en PowerShell**.
+
+## Architecture
+
+```
+                         UTILISATEUR (navigateur, hls.js)
+                                    │ HTTPS
+                                    ▼
+                  ┌──────────────────────────────────┐
+                  │   AZURE CONTAINER APPS            │
+                  │   (Key Server Node.js + ffmpeg)   │
+                  │   Identité managée système        │
+                  └───────────────┬────────────────────┘
+                                  │
+        ┌─────────────────────────┼─────────────────────────┐
+        ▼                         ▼                         ▼
+┌────────────────┐      ┌──────────────────┐      ┌──────────────────────┐
+│ BLOB STORAGE    │      │ KEY VAULT         │      │ LOG ANALYTICS         │
+│ - uploads (priv)│      │ clé AES-128       │      │ logs Storage +        │
+│ - hls-segments  │      │ par vidéo (RBAC)  │      │ Key Vault + Container │
+│   (lecture pub) │      │                   │      │ Apps                  │
+│ - app-code      │      │                   │      │                       │
+└────────────────┘      └──────────────────┘      └──────────────────────┘
+```
+
+Aucun mot de passe ou clé de stockage n'est utilisé : le Container App
+s'authentifie auprès de Storage et Key Vault uniquement via son
+**identité managée** (rôles RBAC `Storage Blob Data Contributor` et
+`Key Vault Secrets Officer`, assignés par Terraform).
 
 ## Structure du projet
 
 ```
-zerotrust-hls/
-├── terraform/          # Infrastructure as Code
-│   ├── providers.tf
-│   ├── variables.tf
-│   ├── main.tf
-│   └── outputs.tf
-├── keyserver/           # Key Server Node.js (JWT + dérivation AES)
-│   ├── server.js
+Hac-De/
+├── keyserver/
+│   ├── server.js          # upload, ffmpeg, JWT, clés Key Vault
 │   ├── package.json
-│   └── Dockerfile
-└── scripts/
-    ├── deploy.sh         # Orchestration complète
-    ├── package_hls.sh    # Packaging vidéo HLS chiffrée
-    └── player.html        # Lecteur de démo (hls.js)
+│   ├── Dockerfile          # test local uniquement, non utilisé sur Azure
+│   └── public/              # site web (HTML/CSS/JS, hls.js)
+├── terraform/
+│   ├── main.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   └── files/                # généré par deploy.ps1 (app-package.zip)
+├── scripts/
+│   ├── deploy.ps1
+│   ├── demo.ps1
+│   └── cleanup.ps1
+└── README.md
 ```
 
-## Principes Zero-Trust appliqués
+## Déploiement (Azure Cloud Shell — PowerShell)
 
-| Principe | Implémentation |
-|---|---|
-| Pas de confiance implicite | Chaque requête de clé AES exige un JWT valide vérifié à chaque appel |
-| Moindre privilège | Le JWT est scopé à un seul `videoId` ; impossible d'accéder aux clés d'autres vidéos |
-| Clés éphémères | JWT à durée de vie courte (60s par défaut) |
-| Pas de secret persistant | La clé AES est **dérivée** (HMAC-SHA256) à la volée, jamais stockée en base |
-| Identité forte des services | Container App utilise une Identité Managée (pas de mot de passe ACR, pas de clé Storage) |
-| Stockage protégé | Storage Account sans accès public, Key Vault en RBAC uniquement |
-| Surface d'attaque réduite | helmet, CORS strict, rate-limiting, utilisateur non-root dans le conteneur |
+1. Ouvrez **Azure Cloud Shell** et choisissez **PowerShell** (pas Bash).
+2. Importez ce projet (uploadez le zip puis décompressez, ou `git clone` si
+   vous l'avez poussé sur un repo) :
+   ```powershell
+   Expand-Archive Hac-De.zip -DestinationPath .
+   cd Hac-De
+   ```
+3. Lancez le déploiement :
+   ```powershell
+   ./scripts/deploy.ps1
+   ```
+   Ce script :
+   - package `keyserver/` en `.zip` (sans `node_modules`, sans `Dockerfile`)
+   - exécute `terraform init / plan / apply` (Resource Group, Storage,
+     Key Vault, Log Analytics, Container Apps Environment, Container App,
+     rôles RBAC, diagnostic settings)
+   - attend que le Container App démarre (premier démarrage : ~1-2 min, le
+     temps d'`apk add ffmpeg` + `npm install`)
+   - affiche l'URL du site
 
-## Prérequis (Azure Cloud Shell, Bash)
+4. Ouvrez l'URL affichée : **téléversez une vidéo**, elle est segmentée et
+   chiffrée automatiquement, puis lisez-la — la clé est récupérée via JWT
+   en coulisses.
 
-Cloud Shell contient déjà `az`, `terraform`, `ffmpeg` n'est pas garanti -on l'installe si besoin.
+5. Pour vérifier que tout fonctionne en ligne de commande :
+   ```powershell
+   ./scripts/demo.ps1
+   ```
 
-```bash
-ffmpeg -version || sudo apt-get update && sudo apt-get install -y ffmpeg xxd
-az login   # si pas déjà connecté automatiquement dans Cloud Shell
-az account show
+6. Pour tout supprimer en fin de démo (important sur un compte Azure
+   Students à crédit limité) :
+   ```powershell
+   ./scripts/cleanup.ps1
+   ```
+
+## Pourquoi ça fonctionne sans ACR
+
+Un Container App a normalement besoin d'une image construite et poussée
+quelque part (souvent ACR). Ici, on utilise l'image **publique**
+`node:20-alpine` telle quelle, et on surcharge sa commande de démarrage :
+
+```sh
+apk add --no-cache ffmpeg curl unzip
+curl -fsSL "$APP_PACKAGE_URL" -o /tmp/app.zip
+unzip -q /tmp/app.zip -d /app
+cd /app && npm install --omit=dev
+node server.js
 ```
 
-## Étape 1 -Récupérer les fichiers
+`APP_PACKAGE_URL` pointe vers le `.zip` du code, uploadé par Terraform
+(`azurerm_storage_blob.app_package`) dans un container Blob en lecture
+publique (`app-code`) — le code n'a aucun secret en dur, donc ce n'est
+pas un risque (tous les secrets viennent de variables d'environnement /
+Key Vault).
 
-Copiez l'arborescence `zerotrust-hls/` fournie dans votre Cloud Shell (upload via le bouton "Upload/Download files" ou `git` si vous la versionnez), puis :
+## Ce qui rend l'infra "Zero-Trust"
 
-```bash
-cd zerotrust-hls
-chmod +x scripts/*.sh
-```
+- **Aucune clé de compte de stockage** n'est utilisée par l'application
+  (identité managée uniquement).
+- **Aucun secret** dans le code ou dans l'image : `JWT_SECRET` est généré
+  aléatoirement par Terraform et injecté en tant que *secret* Container App.
+- La **clé AES-128 de chaque vidéo** est générée à l'upload, stockée
+  uniquement dans Key Vault, et n'est lue qu'à la demande, après
+  vérification d'un JWT à durée de vie courte (120s par défaut) lié au
+  `videoId`.
+- Les segments `.ts` et la playlist `.m3u8` sont publics, mais **inutiles
+  sans la clé** : c'est le modèle utilisé par les vraies plateformes de
+  streaming (HLS + AES-128 + key delivery server protégé).
+- **Log Analytics** reçoit les journaux d'accès du Storage, les
+  `AuditEvent` du Key Vault et les logs système du Container App : toute
+  tentative d'accès est traçable.
 
-## Étape 2 -Déployer l'infrastructure et le Key Server
+## Coûts (compte Azure Students)
 
-Le script `deploy.sh` fait tout en une fois : `terraform apply`, build de l'image via **ACR Tasks** (donc pas besoin de Docker installé localement dans Cloud Shell), puis ré-application Terraform pour pointer le Container App vers l'image réelle.
+Toutes les ressources utilisées entrent dans les paliers gratuits/peu
+coûteux : Container Apps (180 000 vCPU‑s gratuits/mois), Blob Storage
+(quelques Mo/Go pour une démo), Key Vault (opérations facturées au
+nombre, négligeable), Log Analytics (30 jours de rétention, faible
+volume). Pensez à exécuter `cleanup.ps1` après votre démo.
 
-```bash
-./scripts/deploy.sh
-```
+## Dépannage
 
-À la fin, notez l'URL affichée, par exemple :
-```
-Key Server disponible à : https://ca-keyserver-ab12c.whitewater-12345678.westeurope.azurecontainerapps.io
-```
-
-Vérifiez qu'il répond :
-```bash
-curl https://<votre-url>/healthz
-# {"status":"ok"}
-```
-
-## Étape 3 -Packager une vidéo HLS chiffrée
-
-Le `MASTER_KEY` utilisé par le packaging doit être **strictement identique** à celui utilisé par le Key Server. Par défaut, le Key Server retombe sur `JWT_SECRET` si `MASTER_KEY` n'est pas défini séparément. Récupérez-le depuis Key Vault :
-
-```bash
-KV_NAME=$(cd terraform && terraform output -raw key_vault_name)
-MASTER_KEY=$(az keyvault secret show --vault-name "$KV_NAME" --name jwt-signing-secret --query value -o tsv)
-```
-
-Packagez une vidéo locale (mp4) :
-
-```bash
-KEY_SERVER_URL="https://<votre-url-key-server>" \
-./scripts/package_hls.sh ./ma_video.mp4 demo-video-001 "$MASTER_KEY" ./output
-```
-
-Cela génère dans `./output/demo-video-001/` :
-- `playlist.m3u8` (référence `https://.../keys/demo-video-001` comme URI de clé)
-- `segment_000.ts`, `segment_001.ts`, ... (segments **chiffrés** AES-128)
-
-## Étape 4 -Servir la playlist et tester le pipeline complet
-
-Servez les fichiers statiquement (Cloud Shell ou en local) :
-
-```bash
-cd output/demo-video-001
-python3 -m http.server 9090
-```
-
-Dans un autre terminal/onglet, ouvrez `scripts/player.html` dans votre navigateur (ou servez-le aussi en HTTP), renseignez :
-- URL du Key Server → l'URL Azure obtenue à l'étape 2
-- video_id → `demo-video-001`
-- URL playlist → `http://localhost:9090/playlist.m3u8`
-
-Cliquez sur "Obtenir un JWT et lancer la lecture". Le flux suivant se produit :
-1. Le navigateur demande un JWT via `POST /auth/token` (identifiants démo).
-2. `hls.js` charge `playlist.m3u8`, voit l'`#EXT-X-KEY` pointant vers le Key Server.
-3. `hls.js` appelle `GET /keys/demo-video-001` avec le header `Authorization: Bearer <JWT>`.
-4. Le Key Server vérifie le JWT, vérifie que `videoId` correspond, dérive et renvoie la clé AES brute.
-5. Le lecteur déchiffre les segments à la volée et joue la vidéo.
-
-## Étape 5 -Démontrer les garanties Zero-Trust
-
-Quelques tests à montrer en démo :
-
-**a) Sans JWT → refus**
-```bash
-curl -i https://<key-server-url>/keys/demo-video-001
-# 401 Token Bearer manquant
-```
-
-**b) JWT expiré (>60s) → refus**
-```bash
-TOKEN=$(curl -s -X POST https://<key-server-url>/auth/token \
-  -H "Content-Type: application/json" \
-  -d '{"clientId":"demo-client","clientSecret":"demo-secret-changeme","videoId":"demo-video-001"}' \
-  | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
-sleep 65
-curl -i https://<key-server-url>/keys/demo-video-001 -H "Authorization: Bearer $TOKEN"
-# 401 Token invalide ou expiré
-```
-
-**c) JWT valide mais pour une autre vidéo → refus (moindre privilège)**
-```bash
-curl -i https://<key-server-url>/keys/AUTRE-VIDEO -H "Authorization: Bearer $TOKEN"
-# 403 Token non autorisé pour cette vidéo
-```
-
-**d) Segments illisibles sans la clé**
-```bash
-file output/demo-video-001/segment_000.ts
-# Les segments sont chiffrés, leur contenu n'est pas un flux MPEG-TS lisible directement
-```
-
-## Sécurisation pour un usage réel (au-delà de cette démo)
-
-- Remplacer `/auth/token` (démo) par une intégration **Azure AD / Entra ID** (OAuth2 / OIDC) avec authentification utilisateur réelle.
-- Restreindre `ALLOWED_ORIGINS` au domaine exact du lecteur en production (pas `*`).
-- Mettre les segments `.ts` derrière un CDN avec SAS de courte durée plutôt qu'un accès statique simple.
-- Stocker `MASTER_KEY` comme secret dédié séparé de `JWT_SECRET` (actuellement, par simplicité de démo, le serveur retombe sur `JWT_SECRET` si `MASTER_KEY` n'est pas fourni).
-- Ajouter une politique réseau (Private Endpoints) sur le Storage Account et le Key Vault pour un Zero-Trust réseau complet.
-- Activer Microsoft Defender for Containers sur l'environnement Container Apps.
-
-## Nettoyage
-
-```bash
-cd terraform
-terraform destroy -auto-approve
-```
+- **HTTP 403 sur `/upload` juste après le déploiement** : la propagation
+  des rôles RBAC (Storage / Key Vault) peut prendre 1-2 minutes après
+  `terraform apply`. Réessayez.
+- **Le site ne répond pas tout de suite** : le premier démarrage du
+  conteneur installe `ffmpeg` via `apk` — comptez 1 à 2 minutes.
+  Suivez les logs avec :
+  ```powershell
+  az containerapp logs show --name <container_app_name> --resource-group rg-ztstream-demo --follow
+  ```
+- **Modifier le code et redéployer** : relancez simplement
+  `./scripts/deploy.ps1` — Terraform détecte le changement du `.zip`
+  (`filemd5`) et redéploie une nouvelle révision du Container App.

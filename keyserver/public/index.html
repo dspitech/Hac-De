@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Zero-Trust HLS — Console de diffusion chiffrée</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="noise"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">◈</span>
+    <div>
+      <div class="brand-name">ZERO&#8209;TRUST&nbsp;HLS</div>
+      <div class="brand-sub">chaque segment verrouillé · chaque clé tracée</div>
+    </div>
+  </div>
+  <div class="status-pill" id="apiStatus">
+    <span class="dot"></span> vérification du serveur…
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ===================== UPLOAD ===================== -->
+  <section class="panel vault" id="vaultPanel">
+    <div class="panel-label">01 — déposer une vidéo</div>
+    <h1>La vidéo entre en clair.<br>Elle ressort en segments chiffrés.</h1>
+    <p class="lede">Glissez un fichier vidéo. Il est automatiquement découpé en segments HLS de
+      <span class="accent">6 secondes</span> et chaque segment est chiffré en <span class="accent">AES‑128</span>
+      avant de quitter le serveur. La clé ne touche jamais le navigateur sans jeton valide.</p>
+
+    <form id="uploadForm">
+      <label class="dropzone" id="dropzone" for="fileInput">
+        <input type="file" id="fileInput" accept="video/*" hidden />
+        <div class="dropzone-icon">⛶</div>
+        <div class="dropzone-text" id="dropzoneText">Glissez un fichier ici, ou cliquez pour parcourir</div>
+        <div class="dropzone-hint">MP4 · MOV · MKV — 1 Go max</div>
+      </label>
+
+      <input type="text" id="titleInput" placeholder="Titre de la vidéo (optionnel)" class="text-input" />
+
+      <button type="submit" class="btn-primary" id="uploadBtn" disabled>Téléverser &amp; chiffrer</button>
+    </form>
+
+    <!-- Signature element: chain of segments lighting up as they get locked -->
+    <div class="pipeline" id="pipeline" hidden>
+      <div class="pipeline-row">
+        <span class="pipeline-label" id="pipelineLabel">Téléversement…</span>
+        <span class="pipeline-pct" id="pipelinePct">0%</span>
+      </div>
+      <div class="upload-bar"><div class="upload-bar-fill" id="uploadBarFill"></div></div>
+      <div class="segment-chain" id="segmentChain"></div>
+    </div>
+
+    <div class="log" id="uploadLog" hidden></div>
+  </section>
+
+  <!-- ===================== LIBRARY + PLAYER ===================== -->
+  <section class="panel library">
+    <div class="panel-label">02 — diffuser</div>
+    <div class="library-head">
+      <h2>Vidéos disponibles</h2>
+      <button class="btn-ghost" id="refreshBtn">↻ actualiser</button>
+    </div>
+    <ul class="video-list" id="videoList">
+      <li class="empty">Aucune vidéo pour l'instant — téléversez-en une.</li>
+    </ul>
+  </section>
+
+  <section class="panel player-panel">
+    <div class="panel-label">03 — lecture protégée</div>
+    <h2 id="playerTitle">En attente d'une vidéo…</h2>
+    <video id="video" controls></video>
+    <div class="key-trace" id="keyTrace">
+      <div class="key-trace-row"><span>1.</span> Demande d'un jeton JWT (60–120s)</div>
+      <div class="key-trace-row"><span>2.</span> hls.js charge la playlist chiffrée (lecture publique)</div>
+      <div class="key-trace-row"><span>3.</span> hls.js demande la clé AES‑128 au Key Server</div>
+      <div class="key-trace-row"><span>4.</span> Le Key Server vérifie le JWT et lit la clé dans Key Vault</div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">Azure Container Apps · Blob Storage · Key Vault · Log Analytics — sans Azure Container Registry</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

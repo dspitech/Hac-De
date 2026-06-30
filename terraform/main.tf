@@ -1,161 +1,205 @@
-############################################
-# Naming & randomisation pour unicité globale
-############################################
-resource "random_string" "suffix" {
-  length  = 5
-  special = false
-  upper   = false
+terraform {
+  required_version = ">= 1.0"
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.110"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.5"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {
+    key_vault {
+      purge_soft_delete_on_destroy = true
+    }
+  }
+}
+
+data "azurerm_client_config" "current" {}
+
+resource "random_integer" "suffix" {
+  min = 1000
+  max = 9999
 }
 
 resource "random_password" "jwt_secret" {
-  count   = var.jwt_signing_secret == "" ? 1 : 0
+  count   = var.jwt_secret == "" ? 1 : 0
   length  = 48
   special = false
 }
 
 locals {
-  suffix      = random_string.suffix.result
-  name_prefix = "${var.project_name}-${var.environment}"
-  jwt_secret  = var.jwt_signing_secret != "" ? var.jwt_signing_secret : random_password.jwt_secret[0].result
+  jwt_secret      = var.jwt_secret != "" ? var.jwt_secret : random_password.jwt_secret[0].result
+  uploads_container = "uploads"
+  hls_container      = "hls-segments"
+  appcode_container  = "app-code"
+  app_package_path   = "${path.module}/files/app-package.zip"
 }
 
-############################################
-# Resource Group
-############################################
+# ============================================================
+# RESOURCE GROUP
+# ============================================================
 resource "azurerm_resource_group" "main" {
-  name     = "rg-${local.name_prefix}"
+  name     = "rg-ztstream-demo"
   location = var.location
+  tags = {
+    Environment = var.environment
+    Project     = "ZeroTrust-Streaming"
+    ManagedBy   = "Terraform"
+  }
 }
 
-############################################
-# Log Analytics (requis par Container Apps Env)
-############################################
+# ============================================================
+# LOG ANALYTICS (analytique pour Container Apps, Storage, Key Vault)
+# ============================================================
 resource "azurerm_log_analytics_workspace" "main" {
-  name                = "log-${local.name_prefix}-${local.suffix}"
+  name                = "log-ztstream-${random_integer.suffix.result}"
   location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
   sku                 = "PerGB2018"
   retention_in_days   = 30
 }
 
-############################################
-# Azure Container Registry (images Key Server)
-# Zero-Trust: pas d'admin user, pull via Managed Identity + RBAC
-############################################
-resource "azurerm_container_registry" "main" {
-  name                = "acr${replace(local.name_prefix, "-", "")}${local.suffix}"
-  resource_group_name = azurerm_resource_group.main.name
-  location            = azurerm_resource_group.main.location
-  sku                 = "Basic"
-  admin_enabled       = false
-}
-
-############################################
-# Key Vault: stocke le secret JWT et la clé maître AES
-# Zero-Trust: accès uniquement via Managed Identity + RBAC, pas de clé d'accès partagée
-############################################
-data "azurerm_client_config" "current" {}
-
-resource "azurerm_key_vault" "main" {
-  name                       = "kv-${substr(local.name_prefix, 0, 10)}-${local.suffix}"
-  location                   = azurerm_resource_group.main.location
-  resource_group_name        = azurerm_resource_group.main.name
-  tenant_id                  = data.azurerm_client_config.current.tenant_id
-  sku_name                   = "standard"
-  enable_rbac_authorization  = true
-  purge_protection_enabled   = false
-  soft_delete_retention_days = 7
-}
-
-# L'utilisateur courant (vous, via Cloud Shell) reçoit le droit d'écrire des secrets
-resource "azurerm_role_assignment" "kv_admin_current_user" {
-  scope                = azurerm_key_vault.main.id
-  role_definition_name = "Key Vault Secrets Officer"
-  principal_id         = data.azurerm_client_config.current.object_id
-}
-
-resource "azurerm_key_vault_secret" "jwt_secret" {
-  name         = "jwt-signing-secret"
-  value        = local.jwt_secret
-  key_vault_id = azurerm_key_vault.main.id
-  depends_on   = [azurerm_role_assignment.kv_admin_current_user]
-}
-
-############################################
-# Storage Account: segments HLS chiffrés
-# Zero-Trust: accès public désactivé, lecture via SAS de courte durée uniquement
-############################################
+# ============================================================
+# STORAGE ACCOUNT (vidéos brutes + segments HLS + code applicatif)
+# ============================================================
 resource "azurerm_storage_account" "main" {
-  name                            = "st${replace(local.name_prefix, "-", "")}${local.suffix}"
+  name                            = "stzt${random_integer.suffix.result}"
   resource_group_name             = azurerm_resource_group.main.name
   location                        = azurerm_resource_group.main.location
   account_tier                    = "Standard"
   account_replication_type        = "LRS"
   min_tls_version                 = "TLS1_2"
-  allow_nested_items_to_be_public = false
+  enable_https_traffic_only       = true
+  allow_nested_items_to_be_public = true # nécessaire pour la lecture publique des segments chiffrés
+
+  blob_properties {
+    versioning_enabled = true
+    delete_retention_policy {
+      days = 7
+    }
+  }
+
+  tags = azurerm_resource_group.main.tags
 }
 
+# Segments HLS chiffrés + playlists : lecture publique (le contenu est chiffré,
+# seule la clé AES est protégée par JWT)
 resource "azurerm_storage_container" "hls" {
-  name                  = "hls-segments"
+  name                  = local.hls_container
+  storage_account_name  = azurerm_storage_account.main.name
+  container_access_type = "blob"
+}
+
+# Vidéos sources brutes : privé, jamais exposé publiquement
+resource "azurerm_storage_container" "uploads" {
+  name                  = local.uploads_container
   storage_account_name  = azurerm_storage_account.main.name
   container_access_type = "private"
 }
 
-############################################
-# Container Apps Environment
-############################################
+# Code applicatif du Key Server (pas de secret dedans), servi en lecture
+# publique pour que le Container App puisse le télécharger au démarrage
+# sans dépendre d'un registre de conteneurs (ACR).
+resource "azurerm_storage_container" "appcode" {
+  name                  = local.appcode_container
+  storage_account_name  = azurerm_storage_account.main.name
+  container_access_type = "blob"
+}
+
+resource "azurerm_storage_blob" "app_package" {
+  name                   = "app-package.zip"
+  storage_account_name   = azurerm_storage_account.main.name
+  storage_container_name = azurerm_storage_container.appcode.name
+  type                    = "Block"
+  source                  = local.app_package_path
+  content_md5             = filemd5(local.app_package_path)
+}
+
+# Diagnostic settings -> Log Analytics (couche "analytique")
+resource "azurerm_monitor_diagnostic_setting" "storage_blob_diag" {
+  name                       = "diag-blob-${random_integer.suffix.result}"
+  target_resource_id        = "${azurerm_storage_account.main.id}/blobServices/default"
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+
+  enabled_log {
+    category = "StorageRead"
+  }
+  enabled_log {
+    category = "StorageWrite"
+  }
+  metric {
+    category = "Transaction"
+    enabled  = true
+  }
+}
+
+# ============================================================
+# KEY VAULT (clés AES-128, une par vidéo) — autorisation par RBAC
+# ============================================================
+resource "azurerm_key_vault" "main" {
+  name                       = "kv-zt${random_integer.suffix.result}"
+  location                   = azurerm_resource_group.main.location
+  resource_group_name        = azurerm_resource_group.main.name
+  tenant_id                  = data.azurerm_client_config.current.tenant_id
+  sku_name                   = "standard"
+  purge_protection_enabled   = false
+  soft_delete_retention_days = 7
+  enable_rbac_authorization  = true
+
+  tags = azurerm_resource_group.main.tags
+}
+
+resource "azurerm_monitor_diagnostic_setting" "kv_diag" {
+  name                       = "diag-kv-${random_integer.suffix.result}"
+  target_resource_id        = azurerm_key_vault.main.id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+
+  enabled_log {
+    category = "AuditEvent"
+  }
+  metric {
+    category = "AllMetrics"
+    enabled  = true
+  }
+}
+
+# Permet à l'utilisateur courant (vous, dans Cloud Shell) de gérer les
+# secrets pour le débogage / la démo (az keyvault secret ...)
+resource "azurerm_role_assignment" "current_user_kv" {
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Secrets Officer"
+  principal_id          = data.azurerm_client_config.current.object_id
+}
+
+# ============================================================
+# CONTAINER APPS ENVIRONMENT (relié à Log Analytics)
+# ============================================================
 resource "azurerm_container_app_environment" "main" {
-  name                       = "cae-${local.name_prefix}-${local.suffix}"
+  name                       = "cae-zt-${random_integer.suffix.result}"
   location                   = azurerm_resource_group.main.location
   resource_group_name        = azurerm_resource_group.main.name
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
 }
 
-############################################
-# Container App: Key Server
-# Zero-Trust: Identité managée system-assigned, secrets injectés depuis Key Vault,
-# JWT requis pour toute délivrance de clé AES, HTTPS forcé (ingress externe TLS).
-############################################
-resource "azurerm_user_assigned_identity" "keyserver" {
-  name                = "id-keyserver-${local.suffix}"
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
-}
-
-# Droit de pull d'images sur l'ACR (RBAC, pas de mot de passe)
-resource "azurerm_role_assignment" "acr_pull" {
-  scope                = azurerm_container_registry.main.id
-  role_definition_name = "AcrPull"
-  principal_id         = azurerm_user_assigned_identity.keyserver.principal_id
-}
-
-# Droit de lire les secrets du Key Vault
-resource "azurerm_role_assignment" "kv_reader_keyserver" {
-  scope                = azurerm_key_vault.main.id
-  role_definition_name = "Key Vault Secrets User"
-  principal_id         = azurerm_user_assigned_identity.keyserver.principal_id
-}
-
+# ============================================================
+# CONTAINER APP (Key Server) — image publique node:20-alpine,
+# le code applicatif est téléchargé au démarrage depuis le Storage
+# (aucune image personnalisée, donc aucun ACR nécessaire)
+# ============================================================
 resource "azurerm_container_app" "keyserver" {
-  name                         = "ca-keyserver-${local.suffix}"
+  name                         = "ca-keyserver-${random_integer.suffix.result}"
   container_app_environment_id = azurerm_container_app_environment.main.id
   resource_group_name          = azurerm_resource_group.main.name
   revision_mode                = "Single"
 
   identity {
-    type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.keyserver.id]
-  }
-
-  registry {
-    server   = azurerm_container_registry.main.login_server
-    identity = azurerm_user_assigned_identity.keyserver.id
-  }
-
-  secret {
-    name                = "jwt-secret"
-    key_vault_secret_id = azurerm_key_vault_secret.jwt_secret.id
-    identity            = azurerm_user_assigned_identity.keyserver.id
+    type = "SystemAssigned"
   }
 
   template {
@@ -164,25 +208,74 @@ resource "azurerm_container_app" "keyserver" {
 
     container {
       name   = "keyserver"
-      # NB: tant que l'image n'a pas été buildée/poussée dans l'ACR,
-      # on démarre sur une image placeholder publique pour que le déploiement Terraform réussisse.
-      image  = var.key_server_image != "" ? var.key_server_image : "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
-      cpu    = var.container_cpu
-      memory = var.container_memory
+      image  = "docker.io/library/node:20-alpine"
+      cpu    = 0.5
+      memory = "1Gi"
 
+      command = ["sh", "-c"]
+      args = [
+        <<-EOT
+        set -e
+        apk add --no-cache ffmpeg curl unzip >/dev/null
+        mkdir -p /app
+        curl -fsSL "$APP_PACKAGE_URL" -o /tmp/app.zip
+        unzip -q /tmp/app.zip -d /app
+        cd /app
+        npm install --omit=dev --no-audit --no-fund
+        exec node server.js
+        EOT
+      ]
+
+      env {
+        name  = "APP_PACKAGE_URL"
+        value = "${azurerm_storage_account.main.primary_blob_endpoint}${local.appcode_container}/app-package.zip"
+      }
+      env {
+        name  = "PORT"
+        value = "8080"
+      }
       env {
         name        = "JWT_SECRET"
         secret_name = "jwt-secret"
       }
       env {
+        name  = "TOKEN_TTL_SECONDS"
+        value = tostring(var.token_ttl_seconds)
+      }
+      env {
+        name  = "HLS_SEGMENT_SECONDS"
+        value = tostring(var.hls_segment_seconds)
+      }
+      env {
+        name  = "STORAGE_ACCOUNT_NAME"
+        value = azurerm_storage_account.main.name
+      }
+      env {
+        name  = "UPLOADS_CONTAINER"
+        value = local.uploads_container
+      }
+      env {
+        name  = "HLS_CONTAINER"
+        value = local.hls_container
+      }
+      env {
+        name  = "KEYVAULT_URI"
+        value = azurerm_key_vault.main.vault_uri
+      }
+      env {
         name  = "ALLOWED_ORIGINS"
-        value = join(",", var.allowed_origins)
+        value = "*"
       }
       env {
         name  = "NODE_ENV"
         value = "production"
       }
     }
+  }
+
+  secret {
+    name  = "jwt-secret"
+    value = local.jwt_secret
   }
 
   ingress {
@@ -194,10 +287,18 @@ resource "azurerm_container_app" "keyserver" {
       percentage      = 100
     }
   }
+}
 
-  lifecycle {
-    ignore_changes = [
-      template[0].container[0].image,
-    ]
-  }
+# Identité managée du Container App -> droits sur Storage (lecture/écriture blobs)
+resource "azurerm_role_assignment" "containerapp_storage" {
+  scope                = azurerm_storage_account.main.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id          = azurerm_container_app.keyserver.identity[0].principal_id
+}
+
+# Identité managée du Container App -> droits sur Key Vault (lire/écrire les clés)
+resource "azurerm_role_assignment" "containerapp_kv" {
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Secrets Officer"
+  principal_id          = azurerm_container_app.keyserver.identity[0].principal_id
 }

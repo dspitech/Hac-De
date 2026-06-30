@@ -1,7 +1,7 @@
-variable "project_name" {
-  description = "Préfixe utilisé pour nommer toutes les ressources"
+variable "environment" {
+  description = "Nom de l'environnement"
   type        = string
-  default     = "ztstream"
+  default     = "demo"
 }
 
 variable "location" {
@@ -10,37 +10,21 @@ variable "location" {
   default     = "swedencentral"
 }
 
-variable "environment" {
-  description = "Nom de l'environnement (dev, demo, prod)"
-  type        = string
-  default     = "demo"
-}
-
-variable "jwt_signing_secret" {
-  description = "Secret utilisé par le Key Server pour vérifier les JWT (HS256). Si vide, un secret aléatoire est généré."
+variable "jwt_secret" {
+  description = "Secret utilisé pour signer les JWT (laisser vide pour en générer un aléatoire)"
   type        = string
   default     = ""
   sensitive   = true
 }
 
-variable "key_server_image" {
-  description = "Image complète du Key Server dans l'ACR (rempli après le premier build, ex: <acr>.azurecr.io/keyserver:latest)"
-  type        = string
-  default     = ""
+variable "token_ttl_seconds" {
+  description = "Durée de vie des jetons JWT (secondes)"
+  type        = number
+  default     = 120
 }
 
-variable "container_cpu" {
-  type    = number
-  default = 0.5
-}
-
-variable "container_memory" {
-  type    = string
-  default = "1Gi"
-}
-
-variable "allowed_origins" {
-  description = "Origines CORS autorisées pour le Key Server (lecteur HLS)"
-  type        = list(string)
-  default     = ["*"]
+variable "hls_segment_seconds" {
+  description = "Durée d'un segment HLS (secondes)"
+  type        = number
+  default     = 6
 }
