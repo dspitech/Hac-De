@@ -1,4 +1,4 @@
-# Architecture Zero-Trust — Streaming HLS Chiffré AES-128 sur Azure
+# Architecture Zero-Trust -Streaming HLS Chiffré AES-128 sur Azure
 
 ## Structure du projet
 
@@ -33,7 +33,7 @@ zerotrust-hls/
 
 ## Prérequis (Azure Cloud Shell, Bash)
 
-Cloud Shell contient déjà `az`, `terraform`, `ffmpeg` n'est pas garanti — on l'installe si besoin.
+Cloud Shell contient déjà `az`, `terraform`, `ffmpeg` n'est pas garanti -on l'installe si besoin.
 
 ```bash
 ffmpeg -version || sudo apt-get update && sudo apt-get install -y ffmpeg xxd
@@ -41,7 +41,7 @@ az login   # si pas déjà connecté automatiquement dans Cloud Shell
 az account show
 ```
 
-## Étape 1 — Récupérer les fichiers
+## Étape 1 -Récupérer les fichiers
 
 Copiez l'arborescence `zerotrust-hls/` fournie dans votre Cloud Shell (upload via le bouton "Upload/Download files" ou `git` si vous la versionnez), puis :
 
@@ -50,7 +50,7 @@ cd zerotrust-hls
 chmod +x scripts/*.sh
 ```
 
-## Étape 2 — Déployer l'infrastructure et le Key Server
+## Étape 2 -Déployer l'infrastructure et le Key Server
 
 Le script `deploy.sh` fait tout en une fois : `terraform apply`, build de l'image via **ACR Tasks** (donc pas besoin de Docker installé localement dans Cloud Shell), puis ré-application Terraform pour pointer le Container App vers l'image réelle.
 
@@ -69,7 +69,7 @@ curl https://<votre-url>/healthz
 # {"status":"ok"}
 ```
 
-## Étape 3 — Packager une vidéo HLS chiffrée
+## Étape 3 -Packager une vidéo HLS chiffrée
 
 Le `MASTER_KEY` utilisé par le packaging doit être **strictement identique** à celui utilisé par le Key Server. Par défaut, le Key Server retombe sur `JWT_SECRET` si `MASTER_KEY` n'est pas défini séparément. Récupérez-le depuis Key Vault :
 
@@ -89,7 +89,7 @@ Cela génère dans `./output/demo-video-001/` :
 - `playlist.m3u8` (référence `https://.../keys/demo-video-001` comme URI de clé)
 - `segment_000.ts`, `segment_001.ts`, ... (segments **chiffrés** AES-128)
 
-## Étape 4 — Servir la playlist et tester le pipeline complet
+## Étape 4 -Servir la playlist et tester le pipeline complet
 
 Servez les fichiers statiquement (Cloud Shell ou en local) :
 
@@ -110,7 +110,7 @@ Cliquez sur "Obtenir un JWT et lancer la lecture". Le flux suivant se produit :
 4. Le Key Server vérifie le JWT, vérifie que `videoId` correspond, dérive et renvoie la clé AES brute.
 5. Le lecteur déchiffre les segments à la volée et joue la vidéo.
 
-## Étape 5 — Démontrer les garanties Zero-Trust
+## Étape 5 -Démontrer les garanties Zero-Trust
 
 Quelques tests à montrer en démo :
 
