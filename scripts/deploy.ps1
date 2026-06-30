@@ -56,8 +56,13 @@ Write-Host "`n[3/4] Déploiement de l'infrastructure Azure" -ForegroundColor Yel
 Push-Location $TerraformDir
 try {
     terraform init -reconfigure
-    terraform plan -out=tfplan
-    terraform apply tfplan -auto-approve
+    if ($LASTEXITCODE -ne 0) { throw "terraform init a échoué (code $LASTEXITCODE)" }
+
+    terraform validate
+    if ($LASTEXITCODE -ne 0) { throw "terraform validate a échoué (code $LASTEXITCODE)" }
+
+    terraform apply -auto-approve
+    if ($LASTEXITCODE -ne 0) { throw "terraform apply a échoué (code $LASTEXITCODE)" }
 
     $rg            = terraform output -raw resource_group
     $storage       = terraform output -raw storage_account_name
