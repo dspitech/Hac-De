@@ -1,0 +1,17 @@
+{
+  "name": "hls-zero-trust-keyserver",
+  "version": "1.0.0",
+  "description": "Key Server Zero-Trust pour streaming HLS chiffre AES-128, authentification JWT",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "express-rate-limit": "^7.3.1"
+  }
+}

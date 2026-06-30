@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<title>Démo Zero-Trust HLS Player</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; }
+  video { width: 100%; background: #000; }
+  input, button { padding: 8px; margin: 4px 0; width: 100%; box-sizing: border-box; }
+  #log { background: #111; color: #0f0; font-family: monospace; padding: 10px; height: 160px; overflow-y: auto; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+  <h2>Démo Lecteur HLS Zero-Trust (AES-128 + JWT)</h2>
+
+  <label>URL du Key Server (ex: https://ca-keyserver-xxxxx.azurecontainerapps.io)</label>
+  <input id="keyServerUrl" value="http://localhost:8080" />
+
+  <label>video_id</label>
+  <input id="videoId" value="demo-video-001" />
+
+  <label>URL du fichier playlist.m3u8 (servi statiquement, ex: via http.server local)</label>
+  <input id="playlistUrl" value="http://localhost:9090/playlist.m3u8" />
+
+  <button onclick="startPlayback()">1. Obtenir un JWT et lancer la lecture</button>
+
+  <video id="video" controls></video>
+
+  <h3>Logs</h3>
+  <div id="log"></div>
+
+<script>
+function log(msg) {
+  const el = document.getElementById('log');
+  el.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+async function startPlayback() {
+  const keyServerUrl = document.getElementById('keyServerUrl').value.replace(/\/$/, '');
+  const videoId = document.getElementById('videoId').value;
+  const playlistUrl = document.getElementById('playlistUrl').value;
+  const video = document.getElementById('video');
+
+  log(`Demande de JWT pour videoId=${videoId} ...`);
+  const tokenResp = await fetch(`${keyServerUrl}/auth/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      clientId: 'demo-client',
+      clientSecret: 'demo-secret-changeme',
+      videoId
+    })
+  });
+
+  if (!tokenResp.ok) {
+    log(`Échec obtention JWT: ${tokenResp.status}`);
+    return;
+  }
+
+  const { access_token, expires_in } = await tokenResp.json();
+  log(`JWT obtenu, expire dans ${expires_in}s`);
+
+  if (Hls.isSupported()) {
+    const hls = new Hls({
+      xhrSetup: function (xhr, url) {
+        // Injecte le JWT uniquement sur les requêtes vers le Key Server (clé AES)
+        if (url.includes('/keys/')) {
+          xhr.setRequestHeader('Authorization', `Bearer ${access_token}`);
+          log(`Header Authorization injecté pour: ${url}`);
+        }
+      }
+    });
+    hls.loadSource(playlistUrl);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      log('Manifest HLS chargé, lecture...');
+      video.play();
+    });
+    hls.on(Hls.Events.ERROR, (event, data) => {
+      log(`Erreur HLS: ${data.type} / ${data.details}`);
+    });
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = playlistUrl;
+    video.play();
+  } else {
+    log('HLS non supporté par ce navigateur.');
+  }
+}
+</script>
+</body>
+</html>
