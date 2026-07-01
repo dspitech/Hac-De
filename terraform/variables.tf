@@ -28,3 +28,21 @@ variable "hls_segment_seconds" {
   type        = number
   default     = 6
 }
+
+variable "admin_username" {
+  description = "Identifiant du compte administrateur créé automatiquement au démarrage"
+  type        = string
+  default     = "admin"
+}
+
+variable "session_ttl_seconds" {
+  description = "Durée de vie d'un jeton de session (login)"
+  type        = number
+  default     = 7200
+}
+
+variable "guest_ttl_seconds" {
+  description = "Durée de vie d'un jeton de session invité (éphémère)"
+  type        = number
+  default     = 1800
+}

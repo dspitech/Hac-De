@@ -33,6 +33,12 @@ resource "random_password" "jwt_secret" {
   special = false
 }
 
+resource "random_password" "admin_password" {
+  length  = 16
+  special = true
+  override_special = "-_!#%"
+}
+
 locals {
   jwt_secret      = var.jwt_secret != "" ? var.jwt_secret : random_password.jwt_secret[0].result
   uploads_container = "uploads"
@@ -121,6 +127,32 @@ resource "azurerm_storage_blob" "app_package" {
   content_md5             = filemd5(local.app_package_path)
 }
 
+# ============================================================
+# TABLES (comptes utilisateurs, commentaires, révocation de
+# jetons, journal d'audit) — accès exclusivement via identité
+# managée (RBAC "Storage Table Data Contributor"), pas de clé
+# de compte de stockage.
+# ============================================================
+resource "azurerm_storage_table" "users" {
+  name                 = "Users"
+  storage_account_name = azurerm_storage_account.main.name
+}
+
+resource "azurerm_storage_table" "comments" {
+  name                 = "Comments"
+  storage_account_name = azurerm_storage_account.main.name
+}
+
+resource "azurerm_storage_table" "revoked_tokens" {
+  name                 = "RevokedTokens"
+  storage_account_name = azurerm_storage_account.main.name
+}
+
+resource "azurerm_storage_table" "audit_log" {
+  name                 = "AuditLog"
+  storage_account_name = azurerm_storage_account.main.name
+}
+
 # Diagnostic settings -> Log Analytics (couche "analytique")
 resource "azurerm_monitor_diagnostic_setting" "storage_blob_diag" {
   name                       = "diag-blob-${random_integer.suffix.result}"
@@ -137,6 +169,19 @@ resource "azurerm_monitor_diagnostic_setting" "storage_blob_diag" {
     category = "Transaction"
     enabled  = true
   }
+}
+
+# ============================================================
+# APPLICATION INSIGHTS (traces de requêtes, dépendances,
+# événements custom de login/upload/délivrance de clé) —
+# alimente le même workspace Log Analytics que le reste.
+# ============================================================
+resource "azurerm_application_insights" "main" {
+  name                = "appi-ztstream-${random_integer.suffix.result}"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  workspace_id        = azurerm_log_analytics_workspace.main.id
+  application_type    = "Node.JS"
 }
 
 # ============================================================
@@ -174,6 +219,12 @@ resource "azurerm_monitor_diagnostic_setting" "kv_diag" {
 resource "azurerm_role_assignment" "current_user_kv" {
   scope                = azurerm_key_vault.main.id
   role_definition_name = "Key Vault Secrets Officer"
+  principal_id          = data.azurerm_client_config.current.object_id
+}
+
+resource "azurerm_role_assignment" "current_user_tables" {
+  scope                = azurerm_storage_account.main.id
+  role_definition_name = "Storage Table Data Contributor"
   principal_id          = data.azurerm_client_config.current.object_id
 }
 
@@ -243,6 +294,14 @@ resource "azurerm_container_app" "keyserver" {
         value = tostring(var.token_ttl_seconds)
       }
       env {
+        name  = "SESSION_TTL_SECONDS"
+        value = tostring(var.session_ttl_seconds)
+      }
+      env {
+        name  = "GUEST_TTL_SECONDS"
+        value = tostring(var.guest_ttl_seconds)
+      }
+      env {
         name  = "HLS_SEGMENT_SECONDS"
         value = tostring(var.hls_segment_seconds)
       }
@@ -270,12 +329,28 @@ resource "azurerm_container_app" "keyserver" {
         name  = "NODE_ENV"
         value = "production"
       }
+      env {
+        name  = "ADMIN_USERNAME"
+        value = var.admin_username
+      }
+      env {
+        name        = "ADMIN_PASSWORD"
+        secret_name = "admin-password"
+      }
+      env {
+        name  = "APPLICATIONINSIGHTS_CONNECTION_STRING"
+        value = azurerm_application_insights.main.connection_string
+      }
     }
   }
 
   secret {
     name  = "jwt-secret"
     value = local.jwt_secret
+  }
+  secret {
+    name  = "admin-password"
+    value = random_password.admin_password.result
   }
 
   ingress {
@@ -300,5 +375,13 @@ resource "azurerm_role_assignment" "containerapp_storage" {
 resource "azurerm_role_assignment" "containerapp_kv" {
   scope                = azurerm_key_vault.main.id
   role_definition_name = "Key Vault Secrets Officer"
+  principal_id          = azurerm_container_app.keyserver.identity[0].principal_id
+}
+
+# Identité managée du Container App -> droits sur les Tables (utilisateurs,
+# commentaires, jetons révoqués, journal d'audit)
+resource "azurerm_role_assignment" "containerapp_tables" {
+  scope                = azurerm_storage_account.main.id
+  role_definition_name = "Storage Table Data Contributor"
   principal_id          = azurerm_container_app.keyserver.identity[0].principal_id
 }

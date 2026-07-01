@@ -1,0 +1,144 @@
+name: IaC Pipeline (Terraform Zero-Trust HLS)
+
+# Déclenchement : validation sur chaque PR touchant l'infra ou le code
+# applicatif ; apply automatique uniquement sur push vers main, protégé
+# par l'environnement GitHub "production" (approbation manuelle requise).
+on:
+  pull_request:
+    paths:
+      - "terraform/**"
+      - "keyserver/**"
+      - ".github/workflows/iac.yml"
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - "keyserver/**"
+
+permissions:
+  id-token: write   # requis pour l'authentification OIDC (azure/login)
+  contents: read
+  pull-requests: write
+
+env:
+  TF_VERSION: "1.7.5"
+
+jobs:
+  # ============================================================
+  # LINT & VALIDATION STATIQUE — sans accès Azure (§15, §11.5)
+  # ============================================================
+  lint-and-validate:
+    name: Lint, format & validate (sans credentials)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform fmt -check
+        working-directory: terraform
+        run: terraform fmt -check -recursive
+
+      - name: Créer un package applicatif factice (pour filemd5 au plan)
+        run: |
+          mkdir -p terraform/files
+          cd keyserver && zip -r ../terraform/files/app-package.zip server.js package.json public
+
+      - name: terraform init (backend local, pas de credentials cloud)
+        working-directory: terraform
+        run: terraform init -backend=false
+
+      - name: terraform validate
+        working-directory: terraform
+        run: terraform validate
+
+      - name: Analyse de sécurité statique (tfsec)
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: terraform
+          soft_fail: true
+
+      - name: Scan de vulnérabilités du code applicatif (npm audit)
+        working-directory: keyserver
+        run: npm install --package-lock-only --no-audit --no-fund && npm audit --audit-level=high || true
+
+  # ============================================================
+  # PLAN — nécessite un accès Azure en lecture seule (OIDC, PR only)
+  # ============================================================
+  terraform-plan:
+    name: Terraform plan (PR)
+    needs: lint-and-validate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Packager le code applicatif
+        run: |
+          mkdir -p terraform/files
+          cd keyserver && zip -r ../terraform/files/app-package.zip server.js package.json public
+
+      - name: terraform init / plan
+        working-directory: terraform
+        run: |
+          terraform init
+          terraform plan -no-color -out=tfplan | tee plan.txt
+
+      - name: Commenter le plan sur la PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('terraform/plan.txt', 'utf8').slice(-60000);
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `#### Terraform Plan\n\`\`\`\n${plan}\n\`\`\``
+            });
+
+  # ============================================================
+  # APPLY — uniquement sur main, avec approbation manuelle
+  # (environnement GitHub "production" à protéger dans Settings)
+  # ============================================================
+  terraform-apply:
+    name: Terraform apply (main)
+    needs: lint-and-validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Packager le code applicatif
+        run: |
+          mkdir -p terraform/files
+          cd keyserver && zip -r ../terraform/files/app-package.zip server.js package.json public
+
+      - name: terraform init / apply
+        working-directory: terraform
+        run: |
+          terraform init
+          terraform apply -auto-approve

@@ -1,15 +1,18 @@
 {
   "name": "zero-trust-key-server",
-  "version": "2.0.0",
-  "description": "Zero-Trust Key Server pour HLS AES-128 avec upload, segmentation et chiffrement automatiques",
+  "version": "3.0.0",
+  "description": "Zero-Trust Key Server pour HLS AES-128 avec authentification, CRUD vidéos/commentaires et audit",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "@azure/data-tables": "^13.2.2",
     "@azure/identity": "^4.4.1",
     "@azure/keyvault-secrets": "^4.8.0",
     "@azure/storage-blob": "^12.24.0",
+    "applicationinsights": "^2.9.5",
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "express-rate-limit": "^7.3.1",

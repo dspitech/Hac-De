@@ -70,6 +70,8 @@ try {
     $logAnalytics  = terraform output -raw log_analytics_workspace
     $containerApp  = terraform output -raw container_app_name
     $siteUrl       = terraform output -raw site_url
+    $adminUser     = terraform output -raw admin_username
+    $adminPassword = terraform output -raw admin_password
 }
 finally {
     Pop-Location
@@ -119,6 +121,11 @@ Write-Host "══════════════════════�
 Write-Host ""
 Write-Host "  Ouvrez ce lien pour utiliser la console de démo :"
 Write-Host "  $siteUrl" -ForegroundColor Green
+Write-Host ""
+Write-Host "  Compte administrateur créé automatiquement :" -ForegroundColor Yellow
+Write-Host "    Identifiant : $adminUser"
+Write-Host "    Mot de passe : $adminPassword" -ForegroundColor Green
+Write-Host "  (conservez-le : 'terraform output -raw admin_password' pour le retrouver)"
 Write-Host ""
 Write-Host "  (RBAC peut prendre 1-2 min à se propager : si l'upload échoue"
 Write-Host "  juste après le déploiement avec une erreur 403, réessayez.)"

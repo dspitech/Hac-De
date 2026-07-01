@@ -25,3 +25,16 @@ output "key_server_fqdn" {
 output "site_url" {
   value = "https://${azurerm_container_app.keyserver.ingress[0].fqdn}"
 }
+
+output "admin_username" {
+  value = var.admin_username
+}
+
+output "admin_password" {
+  value     = random_password.admin_password.result
+  sensitive = true
+}
+
+output "application_insights_name" {
+  value = azurerm_application_insights.main.name
+}
