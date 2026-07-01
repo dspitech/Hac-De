@@ -386,3 +386,101 @@ video {
 
 /* h2 générique pour les nouveaux panels admin (upload, tables) */
 .vault h2, .grid-2 .panel h2 { font-size: 16px; margin: 0 0 4px; font-weight: 700; }
+
+/* ============================================================
+   MARKETING SECTIONS (fonctionnalités, comment ça marche, rôles)
+   + footer professionnel
+   ============================================================ */
+.marketing { max-width: 1180px; margin: 0 auto; padding: 10px 28px 50px; }
+.section-head { margin: 46px 0 20px; }
+.section-head:first-child { margin-top: 10px; }
+.section-head h2 { font-size: 21px; margin: 6px 0 0; font-weight: 700; }
+
+.feature-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.feature-card {
+  background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 20px; transition: border-color .15s ease;
+}
+.feature-card:hover { border-color: var(--amber-dim); }
+.feature-icon { font-size: 22px; margin-bottom: 10px; }
+.feature-card h3 { font-size: 14.5px; margin: 0 0 8px; font-family: "Space Mono", monospace; }
+.feature-card p { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin: 0; }
+
+.steps-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.step { border-left: 2px solid var(--amber-dim); padding-left: 14px; }
+.step-n { font-family: "Space Mono", monospace; color: var(--amber); font-size: 20px; }
+.step-t { font-size: 13.5px; font-weight: 600; margin: 6px 0 4px; }
+.step-d { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+
+.roles-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.role-card {
+  background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px;
+}
+.role-card .role-badge { display: inline-block; margin-bottom: 10px; }
+.role-card p { font-size: 12.5px; color: var(--text-muted); line-height: 1.6; margin: 0; }
+
+/* ----- footer pro ----- */
+.footer-pro { border-top: 1px solid var(--line); padding: 40px 28px 20px; max-width: 1180px; margin: 0 auto; }
+.footer-cols { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 30px; }
+.footer-col p { font-size: 12.5px; color: var(--text-muted); line-height: 1.6; max-width: 32ch; }
+.footer-title { font-family: "Space Mono", monospace; font-size: 11px; color: var(--amber); letter-spacing: .06em; margin-bottom: 10px; }
+.footer-col a, .footer-col span {
+  display: block; font-size: 12.5px; color: var(--text-muted); text-decoration: none; margin-bottom: 8px;
+}
+.footer-col a:hover { color: var(--amber); }
+.footer-bottom {
+  margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--line);
+  font-family: "Space Mono", monospace; font-size: 10.5px; color: var(--text-muted); text-align: center;
+}
+
+@media (max-width: 900px) {
+  .feature-grid, .steps-row, .roles-grid { grid-template-columns: 1fr 1fr; }
+  .footer-cols { grid-template-columns: 1fr; }
+}
+
+/* ============================================================
+   PAGE DE STATUT PUBLIQUE
+   ============================================================ */
+.status-page { max-width: 760px; margin: 0 auto; padding: 50px 28px 80px; display: flex; flex-direction: column; gap: 24px; }
+.status-hero { text-align: center; padding: 30px 0; }
+.status-indicator { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 20px; font-weight: 700; }
+.status-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--text-muted); }
+.status-dot.ok { background: var(--teal); box-shadow: 0 0 12px var(--teal); }
+.status-dot.bad { background: var(--danger); box-shadow: 0 0 12px var(--danger); }
+.status-sub { margin-top: 10px; font-family: "Space Mono", monospace; font-size: 12.5px; color: var(--text-muted); }
+.status-note { font-size: 12.5px; color: var(--text-muted); margin-top: 12px; line-height: 1.6; }
+.status-note code { background: var(--bg-panel-2); padding: 1px 5px; border-radius: 3px; }
+.status-json {
+  background: var(--bg-panel-2); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px; font-family: "Space Mono", monospace; font-size: 12px; color: var(--teal);
+  overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+}
+
+/* ============================================================
+   MODAL DE TELECHARGEMENT (popup professionnel centré)
+   ============================================================ */
+.player-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.player-head h2 { margin: 0; }
+.btn-outline.small { width: auto; padding: 8px 14px; font-size: 12px; white-space: nowrap; }
+
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(6,8,10,0.72);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000; padding: 20px; backdrop-filter: blur(2px);
+}
+.modal-card {
+  background: var(--bg-panel); border: 1px solid var(--line); border-radius: 4px;
+  padding: 34px 30px 28px; max-width: 420px; width: 100%; position: relative;
+  text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.modal-close {
+  position: absolute; top: 12px; right: 14px; background: none; border: none;
+  color: var(--text-muted); font-size: 20px; cursor: pointer; line-height: 1;
+}
+.modal-close:hover { color: var(--text); }
+.modal-icon { font-size: 30px; margin-bottom: 12px; }
+.modal-card h3 { font-size: 17px; margin: 0 0 12px; font-family: "Space Mono", monospace; }
+.modal-card p { font-size: 13.5px; color: var(--text-muted); line-height: 1.6; margin: 0 0 16px; }
+.modal-card .modal-note { font-size: 12px; color: var(--amber); margin-bottom: 18px; }
+.modal-card strong { color: var(--teal); }
+.modal-card .btn-primary, .modal-card .btn-outline { width: 100%; }

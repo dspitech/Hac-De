@@ -138,9 +138,12 @@ document.querySelectorAll(".navlink").forEach((btn) => {
 // ============================================================
 // RENDU DE L'ETAT D'AUTHENTIFICATION
 // ============================================================
+const ROLE_LABELS = { admin: "Professionnel", user: "Utilisateur final", guest: "Invité" };
+
 function renderAuthState() {
   const loggedIn = !!state.token;
   document.getElementById("heroSection").hidden = loggedIn;
+  document.getElementById("marketingSection").hidden = loggedIn;
   document.getElementById("appLayout").hidden = !loggedIn;
   document.getElementById("navTabs").hidden = !loggedIn;
   document.getElementById("userBox").hidden = !loggedIn;
@@ -148,7 +151,7 @@ function renderAuthState() {
   if (loggedIn) {
     document.getElementById("usernameLabel").textContent = state.username;
     const badge = document.getElementById("roleBadge");
-    badge.textContent = state.role;
+    badge.textContent = ROLE_LABELS[state.role] || state.role;
     badge.className = `role-badge role-${state.role}`;
     document.getElementById("navAdminTab").hidden = state.role !== "admin";
   }
@@ -453,7 +456,7 @@ async function loadUsers() {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${escapeHtml(u.username)}</td>
-        <td><span class="role-badge role-${u.role}">${u.role}</span></td>
+        <td><span class="role-badge role-${u.role}">${ROLE_LABELS[u.role] || u.role}</span></td>
         <td>${new Date(u.createdAt).toLocaleDateString("fr-FR")}</td>
         <td class="row-actions">${u.username === state.username ? "" : `<button class="btn-ghost tiny danger del-user">supprimer</button>`}</td>`;
       const delBtn = tr.querySelector(".del-user");
@@ -500,3 +503,147 @@ document.getElementById("refreshAuditBtn").addEventListener("click", loadAudit);
 // ============================================================
 renderAuthState();
 if (state.token) loadVideos();
+
+// ============================================================
+// TELECHARGEMENT — popup d'autorisation, statut, admin
+// ============================================================
+const downloadBtn = document.getElementById("downloadBtn");
+const downloadModalOverlay = document.getElementById("downloadModalOverlay");
+const downloadModalBody = document.getElementById("downloadModalBody");
+
+function openDownloadModal() { downloadModalOverlay.hidden = false; }
+function closeDownloadModal() { downloadModalOverlay.hidden = true; }
+document.getElementById("downloadModalClose").addEventListener("click", closeDownloadModal);
+downloadModalOverlay.addEventListener("click", (e) => { if (e.target === downloadModalOverlay) closeDownloadModal(); });
+
+function fmtDate(iso) { return iso ? new Date(iso).toLocaleString("fr-FR") : "—"; }
+
+async function refreshDownloadModal() {
+  if (!state.currentVideo) return;
+  const videoId = state.currentVideo.videoId;
+  downloadModalBody.innerHTML = `<h3>Vérification de vos droits…</h3>`;
+  openDownloadModal();
+
+  let data;
+  try {
+    data = await api(`/videos/${videoId}/download-status`);
+  } catch (err) {
+    downloadModalBody.innerHTML = `<h3>Erreur</h3><p>${escapeHtml(err.message)}</p>`;
+    return;
+  }
+  renderDownloadModal(data.request, videoId);
+}
+
+function renderDownloadModal(request, videoId) {
+  if (!request || request.status === "denied" || request.status === "expired") {
+    const reasonMsg = request && request.status === "denied"
+      ? "Votre précédente demande a été refusée par un administrateur."
+      : request && request.status === "expired"
+        ? "Votre précédente autorisation a expiré : la clé de déchiffrement n'est plus valide."
+        : "";
+    downloadModalBody.innerHTML = `
+      <h3>Accès protégé</h3>
+      <p>Vous n'avez pas les droits nécessaires. Cette vidéo est protégée : veuillez demander une
+        autorisation de téléchargement à un administrateur.</p>
+      ${reasonMsg ? `<p class="modal-note">${escapeHtml(reasonMsg)}</p>` : ""}
+      <button class="btn-primary" id="requestAccessBtn">Demander l'autorisation</button>
+    `;
+    document.getElementById("requestAccessBtn").addEventListener("click", async () => {
+      try {
+        const req = await api(`/videos/${videoId}/download-request`, { method: "POST" });
+        renderDownloadModal(req, videoId);
+      } catch (err) { alert(err.message); }
+    });
+    return;
+  }
+
+  if (request.status === "pending") {
+    downloadModalBody.innerHTML = `
+      <h3>Demande envoyée</h3>
+      <p>Votre demande d'autorisation est en attente de validation par un administrateur.</p>
+      <p class="modal-note">Demandée le ${fmtDate(request.requestedAt)}</p>
+      <button class="btn-outline" id="checkAgainBtn">Vérifier à nouveau</button>
+    `;
+    document.getElementById("checkAgainBtn").addEventListener("click", refreshDownloadModal);
+    return;
+  }
+
+  if (request.status === "approved") {
+    downloadModalBody.innerHTML = `
+      <h3>Autorisation accordée</h3>
+      <p>Le fichier est chiffré avec une clé distincte des clés de lecture. Cette clé est valable
+        jusqu'au <strong>${fmtDate(request.downloadKeyExpiresAt)}</strong> — passé ce délai, le fichier
+        téléchargé ne sera plus lisible, même localement.</p>
+      <button class="btn-primary" id="doDownloadBtn">Télécharger le fichier chiffré</button>
+      <a class="btn-outline" href="offline-player.html?video=${videoId}" target="_blank" rel="noopener" style="display:block; text-align:center; text-decoration:none; margin-top:10px;">Ouvrir le lecteur hors-ligne</a>
+    `;
+    document.getElementById("doDownloadBtn").addEventListener("click", () => downloadEncryptedFile(videoId));
+    return;
+  }
+
+  downloadModalBody.innerHTML = `<h3>Statut inconnu</h3><p>Réessayez plus tard.</p>`;
+}
+
+async function downloadEncryptedFile(videoId) {
+  try {
+    const res = await fetch(`/videos/${videoId}/download`, { headers: { Authorization: `Bearer ${state.token}` } });
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error || "Échec du téléchargement"); }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `${videoId}.enc`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) { alert(err.message); }
+}
+
+downloadBtn.addEventListener("click", refreshDownloadModal);
+
+// Afficher le bouton Télécharger dès qu'une vidéo est chargée dans le lecteur
+const _origPlayVideo = playVideo;
+playVideo = async function (v) {
+  await _origPlayVideo(v);
+  downloadBtn.hidden = false;
+};
+
+// ============================================================
+// ADMIN : DEMANDES DE TELECHARGEMENT
+// ============================================================
+async function loadDownloadRequests() {
+  const tbody = document.querySelector("#downloadReqTable tbody");
+  tbody.innerHTML = `<tr><td colspan="5">Chargement…</td></tr>`;
+  try {
+    const data = await api("/admin/download-requests");
+    tbody.innerHTML = "";
+    if (data.requests.length === 0) { tbody.innerHTML = `<tr><td colspan="5">Aucune demande</td></tr>`; return; }
+    data.requests.forEach((r) => {
+      const tr = document.createElement("tr");
+      const statusClass = r.status === "approved" ? "result-success" : r.status === "denied" ? "result-denied" : "";
+      const statusBadge = `<span class="result-badge ${statusClass}">${escapeHtml(r.status)}</span>`;
+      const actions = r.status === "pending"
+        ? `<button class="btn-ghost tiny approve-req">approuver</button> <button class="btn-ghost tiny danger deny-req">refuser</button>`
+        : "";
+      tr.innerHTML = `
+        <td>${escapeHtml(r.videoTitle)}</td>
+        <td>${escapeHtml(r.username)}</td>
+        <td class="mono">${fmtDate(r.requestedAt)}</td>
+        <td>${statusBadge}</td>
+        <td class="row-actions">${actions}</td>`;
+      const approveBtn = tr.querySelector(".approve-req");
+      const denyBtn = tr.querySelector(".deny-req");
+      if (approveBtn) approveBtn.addEventListener("click", async () => {
+        try { await api(`/admin/download-requests/${r.videoId}/${r.requestId}/approve`, { method: "POST" }); loadDownloadRequests(); } catch (err) { alert(err.message); }
+      });
+      if (denyBtn) denyBtn.addEventListener("click", async () => {
+        try { await api(`/admin/download-requests/${r.videoId}/${r.requestId}/deny`, { method: "POST" }); loadDownloadRequests(); } catch (err) { alert(err.message); }
+      });
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="5">${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+document.getElementById("refreshDownloadReqBtn").addEventListener("click", loadDownloadRequests);
+
+const _origAdminTabClick = document.querySelector('.navlink[data-tab="admin"]');
+if (_origAdminTabClick) _origAdminTabClick.addEventListener("click", loadDownloadRequests);

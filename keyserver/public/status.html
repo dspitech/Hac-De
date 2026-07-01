@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Statut du service — Zero-Trust HLS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="navbar">
+  <div class="brand">
+    <span class="brand-mark">◈</span>
+    <div>
+      <div class="brand-name">ZERO&#8209;TRUST&nbsp;HLS</div>
+      <div class="brand-sub">statut du service</div>
+    </div>
+  </div>
+  <a href="index.html" class="btn-ghost">← Retour à la plateforme</a>
+</header>
+
+<main class="status-page">
+  <div class="status-hero">
+    <div class="status-indicator" id="statusIndicator">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusHeadline">Vérification en cours…</span>
+    </div>
+    <div class="status-sub" id="statusSub">Interrogation de <code>/healthz</code>…</div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-label">Composants surveillés</div>
+    <table class="data-table">
+      <thead><tr><th>Composant</th><th>Rôle</th><th>Statut</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Key Server (Container App)</td>
+          <td>API, upload/segmentation, authentification, délivrance de clé</td>
+          <td id="rowKeyServer"><span class="result-badge">vérification…</span></td>
+        </tr>
+        <tr>
+          <td>Blob Storage</td>
+          <td>Segments HLS chiffrés, playlists, code applicatif</td>
+          <td><span class="result-badge result-success">dépendance du Key Server</span></td>
+        </tr>
+        <tr>
+          <td>Key Vault</td>
+          <td>Clés AES‑128 par vidéo</td>
+          <td><span class="result-badge result-success">dépendance du Key Server</span></td>
+        </tr>
+        <tr>
+          <td>Table Storage</td>
+          <td>Comptes, commentaires, révocation, audit</td>
+          <td><span class="result-badge result-success">dépendance du Key Server</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="status-note">Le Key Server nécessite ces quatre composants pour répondre correctement à
+      <code>/healthz</code> — un statut "opérationnel" ci-dessus atteste indirectement de leur bon
+      fonctionnement (identité managée valide, RBAC propagé).</p>
+  </div>
+
+  <div class="panel">
+    <div class="panel-label">Dernière vérification</div>
+    <pre class="status-json" id="statusJson">—</pre>
+  </div>
+</main>
+
+<footer class="footer-bottom">Zero-Trust HLS — page de statut publique, aucune authentification requise</footer>
+
+<script>
+async function checkStatus() {
+  const dot = document.getElementById("statusDot");
+  const headline = document.getElementById("statusHeadline");
+  const sub = document.getElementById("statusSub");
+  const row = document.getElementById("rowKeyServer");
+  const json = document.getElementById("statusJson");
+
+  try {
+    const start = performance.now();
+    const res = await fetch("/healthz");
+    const latency = Math.round(performance.now() - start);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+
+    dot.className = "status-dot ok";
+    headline.textContent = "Tous les systèmes sont opérationnels";
+    sub.textContent = `Réponse en ${latency} ms — dernière vérification à ${new Date().toLocaleTimeString("fr-FR")}`;
+    row.innerHTML = `<span class="result-badge result-success">opérationnel (${latency} ms)</span>`;
+    json.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    dot.className = "status-dot bad";
+    headline.textContent = "Service injoignable";
+    sub.textContent = String(err.message || err);
+    row.innerHTML = `<span class="result-badge result-denied">injoignable</span>`;
+    json.textContent = "—";
+  }
+}
+checkStatus();
+setInterval(checkStatus, 15000);
+</script>
+</body>
+</html>

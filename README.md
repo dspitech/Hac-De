@@ -81,44 +81,118 @@ Contributor`, `Storage Table Data Contributor`, `Key Vault Secrets Officer`).
 
 ## 2. Rôles & CRUD
 
-| Rôle | Vidéos | Commentaires | Utilisateurs | Audit |
-|---|---|---|---|---|
-| **admin** | CRUD complet (upload, renommer, supprimer) | modération (suppression de tout commentaire) | lecture + suppression de comptes | lecture du journal complet |
-| **user** | lecture seule (visionnage) | CRUD sur ses propres commentaires | — | — |
-| **guest** (éphémère) | lecture seule | CRUD sur ses propres commentaires | — | — ; à la déconnexion : session révoquée + ses propres vidéos de test purgées (voir §0.1 sur les clés) |
+| Rôle | Vidéos | Commentaires | Utilisateurs | Audit | Téléchargement |
+|---|---|---|---|---|---|
+| **admin** (Professionnel) | CRUD complet (upload, renommer, supprimer) | modération (suppression de tout commentaire) | lecture + suppression de comptes | lecture du journal complet | approuve/refuse les demandes |
+| **user** (Utilisateur final) | lecture seule (visionnage) | CRUD sur ses propres commentaires | — | — | peut demander une autorisation |
+| **guest** (éphémère) | lecture seule | CRUD sur ses propres commentaires | — | — | peut demander une autorisation ; purgé à la déconnexion |
 
 Le compte `admin` est créé automatiquement au premier démarrage (identifiant/mot de passe générés
 par Terraform, affichés à la fin de `deploy.ps1`).
 
+## 2bis. Chiffrement par segment & rotation automatique des clés
+
+Contrairement à un chiffrement HLS classique (une clé unique pour toute la vidéo), cette plateforme
+génère **une clé AES-128 par segment** :
+
+- À l'upload, chaque segment `.ts` produit par `ffmpeg` est individuellement chiffré avec sa propre
+  clé aléatoire et son propre IV (`encryptSegmentsAndBuildPlaylist` dans `server.js`). La playlist
+  contient une directive `#EXT-X-KEY` distincte avant chaque segment, pointant vers
+  `/keys/{videoId}/{index}`.
+- Chaque clé de segment est stockée séparément dans Key Vault (`hls-key-{videoId}-{index}`).
+- **Rotation automatique** (`rotateSegmentKeys`) : tous les segments sont déchiffrés puis rechiffrés
+  avec des clés et IV entièrement nouveaux :
+  - après l'expiration d'une session de lecture (jeton clé de 120s + 5s de marge) — planifiée à
+    chaque `POST /videos/:id/key-token`, c'est-à-dire à chaque lecture ;
+  - après l'approbation d'une demande de téléchargement.
+
+  Une fois la rotation effectuée, les anciennes clés délivrées (par exemple interceptées ou mises en
+  cache par un client malveillant) ne permettent plus de déchiffrer les segments stockés — la
+  fenêtre d'exploitation d'une clé volée est donc limitée à la durée de la session qui l'a obtenue.
+
+> **Limite connue documentée** : la planification de rotation utilise `setTimeout` en mémoire dans
+> le processus Node.js. Sur un redémarrage du Container App ou avec plusieurs réplicas actifs
+> simultanément, une rotation planifiée peut être perdue (la vidéo reste chiffrée et lisible avec
+> les clés courantes, seule la rotation planifiée n'a pas lieu). Extension possible pour la
+> production : remplacer par une file de tâches durable (Azure Storage Queue + Container Apps Jobs).
+
+## 2ter. Téléchargement protégé par autorisation admin
+
+1. Un utilisateur (ou invité) clique sur **⬇ Télécharger** dans le lecteur. Une pop-up centrée
+   s'affiche : *« Vous n'avez pas les droits. Cette vidéo est protégée. Veuillez demander une
+   autorisation. »* avec un bouton pour envoyer la demande.
+2. La demande apparaît dans **Administration → Demandes de téléchargement**, avec boutons
+   Approuver/Refuser.
+3. À l'approbation :
+   - le fichier source original est chiffré en entier avec une **clé d'export dédiée**, distincte
+     des clés de streaming ;
+   - le fichier chiffré (`.enc`) est déposé dans un container privé `downloads` ;
+   - la clé d'export est stockée dans Key Vault avec une **expiration native** (`expiresOn`,
+     `DOWNLOAD_KEY_TTL_HOURS`, 24h par défaut) ;
+   - les clés de streaming de la vidéo sont aussi rotées par précaution.
+4. L'utilisateur voit la pop-up passer à *« Autorisation accordée »*, télécharge le fichier `.enc`,
+   puis ouvre **`offline-player.html`** pour le lire : cette page demande la clé de déchiffrement au
+   serveur (`GET /videos/:id/download-key`), déchiffre le fichier **entièrement dans le navigateur**
+   (Web Crypto API, `AES-CBC`), et lit la vidéo en clair localement — le fichier en clair n'est
+   jamais renvoyé au serveur.
+5. Passé le délai d'expiration, `download-key` répond `410 Gone` (la clé n'existe plus ou n'est plus
+   accessible dans Key Vault, en plus d'un contrôle applicatif sur `downloadKeyExpiresAt`) : le
+   fichier `.enc` déjà téléchargé devient définitivement illisible, même hors ligne, tant qu'aucune
+   nouvelle autorisation n'est accordée.
+
 ## 3. Flux de lecture protégée (conforme §4.1 du cahier des charges)
 
 1. L'utilisateur authentifié (jeton de session obtenu au login) demande la playlist `.m3u8`
-2. La playlist est servie publiquement (non sensible : elle référence l'URI de la clé, pas la clé)
-3. `hls.js` détecte `#EXT-X-KEY`, demande d'abord un **jeton clé** court (`POST
-   /videos/:id/key-token`, réservé aux sessions authentifiées), puis appelle `GET /keys/:id` avec ce jeton
+2. La playlist est servie publiquement — elle contient **une directive `#EXT-X-KEY` par segment**,
+   chacune référençant l'URI de sa propre clé, jamais la clé elle-même
+3. `hls.js` demande d'abord un **jeton clé** court (`POST /videos/:id/key-token`, réservé aux
+   sessions authentifiées), puis appelle `GET /keys/:id/:segIndex` pour chaque segment avec ce jeton
 4. Le Key Server vérifie signature, type de jeton, `videoId`, expiration, révocation
-5. Si autorisé : lecture de la clé AES-128 dans Key Vault, réponse binaire brute, `Cache-Control: no-store`
-6. `hls.js` déchiffre chaque segment `.ts` à la volée
-7. Chaque délivrance de clé (et chaque action sensible : login, upload, suppression, commentaire) est
-   journalisée : utilisateur, vidéo, IP, horodatage, résultat
+5. Si autorisé : lecture de la clé AES-128 du segment dans Key Vault, réponse binaire brute,
+   `Cache-Control: no-store`
+6. `hls.js` déchiffre chaque segment `.ts` à la volée (clé différente à chaque changement de segment)
+7. Chaque délivrance de clé (et chaque action sensible) est journalisée ; une fois la session de
+   lecture terminée, toutes les clés de la vidéo sont automatiquement rotées (§2bis)
+
+## 3bis. Vérifier qu'une vidéo est bien chiffrée
+
+```powershell
+./scripts/verify-encryption.ps1                  # liste les vidéos et laisse choisir
+./scripts/verify-encryption.ps1 -VideoId <uuid>   # vérifie directement une vidéo précise
+```
+
+Le script effectue 4 contrôles techniques indépendants, sans jamais utiliser de clé de compte de
+stockage :
+1. La playlist contient bien une directive `#EXT-X-KEY` par segment
+2. Tous les IV (vecteurs d'initialisation) sont distincts (aucune clé/IV réutilisé)
+3. Le premier segment `.ts`, lu directement depuis le Storage, **n'a pas** la structure d'un flux
+   MPEG-TS valide en clair (absence de l'octet de synchronisation `0x47` attendu tous les 188 octets
+   dans un flux non chiffré)
+4. La route `/keys/:videoId/0` refuse l'accès sans jeton (`HTTP 401`)
 
 ## 4. Structure du projet
 
 ```
 Hac-De/
 ├── keyserver/
-│   ├── server.js          # auth, CRUD, ffmpeg, jetons, audit, Key Vault
+│   ├── server.js          # auth, CRUD, ffmpeg, clés par segment, rotation, téléchargement, audit
 │   ├── package.json
 │   ├── Dockerfile          # test local uniquement, non utilisé sur Azure
-│   └── public/              # SPA (HTML/CSS/JS, hls.js) : hero, login, bibliothèque, admin
+│   └── public/              # SPA (HTML/CSS/JS, hls.js)
+│       ├── index.html        # hero, marketing, login, bibliothèque, admin, modal téléchargement
+│       ├── status.html       # page de statut publique (§4.5 cahier des charges Pôle 1)
+│       ├── offline-player.html # lecteur hors-ligne, déchiffrement client-side (Web Crypto)
+│       ├── app.js
+│       └── style.css
 ├── terraform/
-│   ├── main.tf              # toutes les ressources Azure
+│   ├── main.tf              # toutes les ressources Azure (5 tables, 3 containers, Key Vault, etc.)
 │   ├── variables.tf
 │   ├── outputs.tf
 │   └── files/                # généré par deploy.ps1 (app-package.zip)
 ├── scripts/
 │   ├── deploy.ps1
 │   ├── demo.ps1
+│   ├── verify-encryption.ps1  # preuve technique qu'une vidéo est chiffrée
 │   └── cleanup.ps1
 ├── .github/workflows/
 │   └── iac.yml               # pipeline CI/CD (lint, plan, apply)
@@ -167,7 +241,7 @@ secret en dur (tous les secrets viennent de variables d'environnement / Key Vaul
 
 | ID | Fonctionnalité | Implémentation |
 |---|---|---|
-| F-KS-01 | `GET /keys/:videoId` | binaire 16 octets, `application/octet-stream` |
+| F-KS-01 | `GET /keys/:videoId/:segIndex` | binaire 16 octets, `application/octet-stream`, une clé distincte par segment |
 | F-KS-02 | Vérification signature JWT | `jwt.verify` avec `JWT_SECRET`, algorithme HS256 |
 | F-KS-03 | Vérification du scope | `payload.videoId === req.params.videoId` |
 | F-KS-04 | Vérification d'expiration | `expiresIn` court (120s par défaut) sur le jeton clé |
@@ -180,15 +254,18 @@ secret en dur (tous les secrets viennent de variables d'environnement / Key Vaul
 ## 8. Modèle de données (Table Storage, équivalent §16)
 
 ```
-Users            PartitionKey="user"     RowKey=username        {passwordHash, role, ephemeral, createdAt}
-Comments         PartitionKey=videoId    RowKey=commentId(uuid) {username, text, createdAt}
-RevokedTokens    PartitionKey="revoked"  RowKey=jti              {revokedAt, username}
-AuditLog         PartitionKey=type       RowKey=uuid              {username, videoId, ip, result, detail, ts}
+Users              PartitionKey="user"     RowKey=username        {passwordHash, role, ephemeral, createdAt}
+Comments           PartitionKey=videoId    RowKey=commentId(uuid) {username, text, createdAt}
+RevokedTokens      PartitionKey="revoked"  RowKey=jti              {revokedAt, username}
+AuditLog           PartitionKey=type       RowKey=uuid              {username, videoId, ip, result, detail, ts}
+DownloadRequests   PartitionKey=videoId    RowKey=requestId(uuid)   {username, status, requestedAt, decidedAt, decidedBy, downloadKeyExpiresAt, exportBlobName}
 ```
 
-Les métadonnées de vidéo (titre, propriétaire, date) sont stockées en `meta.json` à côté des
-segments dans le container `hls-segments/{videoId}/meta.json` — la clé, elle, reste exclusivement
-dans Key Vault (`hls-key-{videoId}`).
+Les métadonnées de vidéo (titre, propriétaire, date, nombre de segments) sont stockées en
+`meta.json` à côté des segments dans `hls-segments/{videoId}/meta.json`. Les clés, elles, restent
+exclusivement dans Key Vault :
+- `hls-key-{videoId}-{segmentIndex}` — une clé de streaming par segment, rotée automatiquement
+- `dl-key-{requestId}` — une clé d'export par téléchargement approuvé, avec expiration native Key Vault
 
 ## 14. Observabilité, logs & audit
 
@@ -277,3 +354,7 @@ le même workspace, pas de ressource facturée séparément au-delà de l'ingest
   changement du `.zip` (`filemd5`) et déploie une nouvelle révision.
 - **Un compte invité ne peut pas se reconnecter** : c'est voulu — les comptes invités sont éphémères
   et supprimés à la déconnexion, avec purge de leurs propres vidéos de test.
+- **Vérifier qu'une vidéo est bien chiffrée** : `./scripts/verify-encryption.ps1 -VideoId <uuid>`
+  (voir §3bis) — utile après un upload pour prouver le chiffrement sans faire confiance à l'interface.
+- **Un fichier téléchargé ne se lit plus** : c'est voulu si le délai `DOWNLOAD_KEY_TTL_HOURS` (24h par
+  défaut) est dépassé — refaites une demande de téléchargement depuis la plateforme.

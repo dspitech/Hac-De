@@ -46,3 +46,9 @@ variable "guest_ttl_seconds" {
   type        = number
   default     = 1800
 }
+
+variable "download_key_ttl_hours" {
+  description = "Durée de validité (heures) d'une clé de déchiffrement d'un téléchargement approuvé"
+  type        = number
+  default     = 24
+}

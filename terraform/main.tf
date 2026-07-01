@@ -44,6 +44,7 @@ locals {
   uploads_container = "uploads"
   hls_container      = "hls-segments"
   appcode_container  = "app-code"
+  downloads_container = "downloads"
   app_package_path   = "${path.module}/files/app-package.zip"
 }
 
@@ -109,6 +110,14 @@ resource "azurerm_storage_container" "uploads" {
   container_access_type = "private"
 }
 
+# Exports chiffrés générés pour les téléchargements approuvés : privé,
+# clé de déchiffrement séparée des clés de streaming, à durée de vie limitée
+resource "azurerm_storage_container" "downloads" {
+  name                  = local.downloads_container
+  storage_account_name  = azurerm_storage_account.main.name
+  container_access_type = "private"
+}
+
 # Code applicatif du Key Server (pas de secret dedans), servi en lecture
 # publique pour que le Container App puisse le télécharger au démarrage
 # sans dépendre d'un registre de conteneurs (ACR).
@@ -150,6 +159,11 @@ resource "azurerm_storage_table" "revoked_tokens" {
 
 resource "azurerm_storage_table" "audit_log" {
   name                 = "AuditLog"
+  storage_account_name = azurerm_storage_account.main.name
+}
+
+resource "azurerm_storage_table" "download_requests" {
+  name                 = "DownloadRequests"
   storage_account_name = azurerm_storage_account.main.name
 }
 
@@ -225,6 +239,15 @@ resource "azurerm_role_assignment" "current_user_kv" {
 resource "azurerm_role_assignment" "current_user_tables" {
   scope                = azurerm_storage_account.main.id
   role_definition_name = "Storage Table Data Contributor"
+  principal_id          = data.azurerm_client_config.current.object_id
+}
+
+# Lecture seule sur les blobs pour l'utilisateur courant (Cloud Shell) —
+# utilisé uniquement par scripts/verify-encryption.ps1 pour lister les
+# vidéos disponibles, jamais pour contourner le Key Server
+resource "azurerm_role_assignment" "current_user_blob_reader" {
+  scope                = azurerm_storage_account.main.id
+  role_definition_name = "Storage Blob Data Reader"
   principal_id          = data.azurerm_client_config.current.object_id
 }
 
@@ -316,6 +339,14 @@ resource "azurerm_container_app" "keyserver" {
       env {
         name  = "HLS_CONTAINER"
         value = local.hls_container
+      }
+      env {
+        name  = "DOWNLOAD_CONTAINER"
+        value = local.downloads_container
+      }
+      env {
+        name  = "DOWNLOAD_KEY_TTL_HOURS"
+        value = tostring(var.download_key_ttl_hours)
       }
       env {
         name  = "KEYVAULT_URI"

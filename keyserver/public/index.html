@@ -79,6 +79,72 @@
   </div>
 </section>
 
+<!-- ===================== MARKETING (visible avant connexion) ===================== -->
+<section class="marketing" id="marketingSection">
+
+  <div class="section-head">
+    <div class="panel-label">Fonctionnalités</div>
+    <h2>Une seule plateforme pour l'ingestion, la protection et la revue</h2>
+  </div>
+  <div class="feature-grid">
+    <div class="feature-card">
+      <div class="feature-icon">🔐</div>
+      <h3>Chiffrement automatique</h3>
+      <p>Chaque upload est segmenté en HLS et chiffré en AES‑128 par ffmpeg, sans intervention
+        manuelle. Une clé unique par vidéo, générée aléatoirement, jamais dérivée d'un mot de passe.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🪪</div>
+      <h3>Rôles &amp; permissions</h3>
+      <p>Professionnel (admin) pour la gestion des vidéos, Utilisateur final pour la lecture et les
+        commentaires, Invité pour une session de démonstration éphémère — chaque action vérifiée
+        côté serveur, jamais seulement côté interface.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🗝️</div>
+      <h3>Serveur de clés Zero-Trust</h3>
+      <p>La clé AES‑128 n'est jamais servie sans un jeton signé, à courte durée de vie, scopé à une
+        seule vidéo, et révocable immédiatement à la déconnexion.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">📊</div>
+      <h3>Audit &amp; observabilité</h3>
+      <p>Chaque connexion, upload, suppression et délivrance de clé est journalisée — consultable en
+        direct dans l'espace Administration, et exportable vers Application Insights.</p>
+    </div>
+  </div>
+
+  <div class="section-head">
+    <div class="panel-label">Comment ça marche</div>
+    <h2>De l'upload à la lecture protégée</h2>
+  </div>
+  <div class="steps-row">
+    <div class="step"><div class="step-n">1</div><div class="step-t">Un professionnel dépose une vidéo</div><div class="step-d">Découpage HLS et chiffrement AES‑128 automatiques côté serveur</div></div>
+    <div class="step"><div class="step-n">2</div><div class="step-t">La playlist est publique</div><div class="step-d">Elle ne référence que l'adresse du serveur de clés, jamais la clé</div></div>
+    <div class="step"><div class="step-n">3</div><div class="step-t">Le lecteur demande un jeton</div><div class="step-d">Jeton de session → jeton clé court, scopé à la vidéo demandée</div></div>
+    <div class="step"><div class="step-n">4</div><div class="step-t">La clé est délivrée et journalisée</div><div class="step-d">Lue dans Key Vault à la volée, jamais mise en cache, accès tracé</div></div>
+  </div>
+
+  <div class="section-head">
+    <div class="panel-label">Rôles de la plateforme</div>
+    <h2>Un modèle d'accès simple et strict</h2>
+  </div>
+  <div class="roles-grid">
+    <div class="role-card">
+      <span class="role-badge role-admin">Professionnel</span>
+      <p>Dépose, renomme et supprime les vidéos ; modère les commentaires ; consulte le journal d'audit complet.</p>
+    </div>
+    <div class="role-card">
+      <span class="role-badge role-user">Utilisateur final</span>
+      <p>Visionne les vidéos disponibles et participe aux commentaires horodatés sur ses propres contributions.</p>
+    </div>
+    <div class="role-card">
+      <span class="role-badge role-guest">Invité</span>
+      <p>Session de démonstration éphémère : accès en lecture, révoqué et purgé automatiquement à la déconnexion.</p>
+    </div>
+  </div>
+</section>
+
 <!-- ===================== APP (visible après connexion) ===================== -->
 <main class="layout" id="appLayout" hidden>
 
@@ -98,13 +164,16 @@
 
       <div class="panel player-panel">
         <div class="panel-label">Lecture protégée</div>
-        <h2 id="playerTitle">Sélectionnez une vidéo</h2>
+        <div class="player-head">
+          <h2 id="playerTitle">Sélectionnez une vidéo</h2>
+          <button class="btn-outline small" id="downloadBtn" hidden>⬇ Télécharger</button>
+        </div>
         <video id="video" controls></video>
         <div class="key-trace" id="keyTrace">
           <div class="key-trace-row"><span>1.</span> Jeton de session déjà obtenu au login</div>
-          <div class="key-trace-row"><span>2.</span> hls.js charge la playlist chiffrée (publique)</div>
+          <div class="key-trace-row"><span>2.</span> Playlist chargée — une clé distincte par segment</div>
           <div class="key-trace-row"><span>3.</span> Jeton clé (120s) demandé au Key Server</div>
-          <div class="key-trace-row"><span>4.</span> Clé AES‑128 lue dans Key Vault, jamais mise en cache</div>
+          <div class="key-trace-row"><span>4.</span> Clés relues dans Key Vault, jamais mises en cache ; rotation automatique après la lecture</div>
         </div>
 
         <div class="comments" id="commentsBox" hidden>
@@ -168,9 +237,21 @@
     </div>
 
     <div class="panel">
+      <div class="panel-label">Demandes de téléchargement</div>
+      <div class="library-head">
+        <h2>Autorisations à valider</h2>
+        <button class="btn-ghost" id="refreshDownloadReqBtn">↻ actualiser</button>
+      </div>
+      <table class="data-table" id="downloadReqTable">
+        <thead><tr><th>Vidéo</th><th>Demandeur</th><th>Demandée le</th><th>Statut</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="panel">
       <div class="panel-label">Observabilité &amp; audit</div>
       <div class="library-head">
-        <h2>Journal d'audit (délivrances de clé, connexions, CRUD)</h2>
+        <h2>Journal d'audit (délivrances de clé, connexions, CRUD, rotations)</h2>
         <button class="btn-ghost" id="refreshAuditBtn">↻ actualiser</button>
       </div>
       <table class="data-table" id="auditTable">
@@ -182,7 +263,39 @@
 
 </main>
 
-<footer class="footer">Azure Container Apps · Blob Storage · Key Vault · Table Storage · Application Insights · Log Analytics — sans ACR</footer>
+<!-- ===================== MODAL DE TELECHARGEMENT ===================== -->
+<div class="modal-overlay" id="downloadModalOverlay" hidden>
+  <div class="modal-card">
+    <button class="modal-close" id="downloadModalClose">×</button>
+    <div class="modal-icon">🔒</div>
+    <div id="downloadModalBody">
+      <h3>Chargement…</h3>
+    </div>
+  </div>
+</div>
+
+<footer class="footer-pro">
+  <div class="footer-cols">
+    <div class="footer-col">
+      <div class="brand-name" style="margin-bottom:8px;">ZERO&#8209;TRUST&nbsp;HLS</div>
+      <p>Plateforme de diffusion vidéo chiffrée, conçue pour la revue collaborative de contenus sensibles.</p>
+    </div>
+    <div class="footer-col">
+      <div class="footer-title">Produit</div>
+      <a href="#marketingSection">Fonctionnalités</a>
+      <a href="#marketingSection">Comment ça marche</a>
+      <a href="status.html">Statut du service</a>
+      <a href="offline-player.html">Lecteur hors-ligne</a>
+    </div>
+    <div class="footer-col">
+      <div class="footer-title">Infrastructure</div>
+      <span>Azure Container Apps</span>
+      <span>Blob Storage · Key Vault</span>
+      <span>Table Storage · App Insights</span>
+    </div>
+  </div>
+  <div class="footer-bottom">Azure Container Apps · Blob Storage · Key Vault · Table Storage · Application Insights · Log Analytics — sans ACR</div>
+</footer>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
 <script src="app.js"></script>

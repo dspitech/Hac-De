@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Lecteur hors-ligne — Zero-Trust HLS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="navbar">
+  <div class="brand">
+    <span class="brand-mark">◈</span>
+    <div>
+      <div class="brand-name">ZERO&#8209;TRUST&nbsp;HLS</div>
+      <div class="brand-sub">lecteur hors-ligne</div>
+    </div>
+  </div>
+  <a href="index.html" class="btn-ghost">← Retour à la plateforme</a>
+</header>
+
+<main class="status-page">
+  <div class="panel">
+    <div class="panel-label">Fichier téléchargé chiffré</div>
+    <h2 style="margin:0 0 6px;">Lire un export protégé</h2>
+    <p style="color:var(--text-muted); font-size:13.5px; line-height:1.6; margin:0 0 18px;">
+      Sélectionnez le fichier <code>.enc</code> téléchargé depuis la plateforme. La clé de
+      déchiffrement est redemandée à chaque lecture à votre session — si l'autorisation a expiré,
+      le fichier ne pourra plus être lu, même localement.
+    </p>
+
+    <div id="loginWarning" class="log error" hidden>
+      Vous n'êtes pas connecté sur cet appareil/navigateur. Ouvrez d'abord
+      <a href="index.html">la plateforme principale</a> et connectez-vous, puis revenez sur cette page.
+    </div>
+
+    <label class="dropzone" for="encFileInput" id="encDropzone">
+      <input type="file" id="encFileInput" accept=".enc" hidden />
+      <div class="dropzone-icon">🔐</div>
+      <div class="dropzone-text" id="encFileText">Choisir le fichier .enc téléchargé</div>
+      <div class="dropzone-hint">Le fichier reste sur votre machine — seule la clé transite par le serveur</div>
+    </label>
+
+    <button class="btn-primary" id="decryptBtn" disabled style="margin-top:16px;">Déchiffrer &amp; lire</button>
+    <div class="log" id="playerLog" hidden></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-label">Lecture</div>
+    <video id="offlineVideo" controls style="width:100%; background:#000; border:1px solid var(--line);"></video>
+  </div>
+</main>
+
+<footer class="footer-bottom">Le déchiffrement s'exécute entièrement dans votre navigateur (Web Crypto API) — le fichier en clair n'est jamais envoyé au serveur</footer>
+
+<script>
+const params = new URLSearchParams(window.location.search);
+const videoId = params.get("video");
+const token = localStorage.getItem("zt_token");
+
+const loginWarning = document.getElementById("loginWarning");
+const encFileInput = document.getElementById("encFileInput");
+const encFileText = document.getElementById("encFileText");
+const decryptBtn = document.getElementById("decryptBtn");
+const playerLog = document.getElementById("playerLog");
+const offlineVideo = document.getElementById("offlineVideo");
+
+if (!token) loginWarning.hidden = false;
+if (!videoId) {
+  playerLog.hidden = false;
+  playerLog.className = "log error";
+  playerLog.textContent = "Paramètre 'video' manquant dans l'URL — ouvrez cette page depuis le bouton Télécharger de la plateforme.";
+}
+
+let selectedFile = null;
+encFileInput.addEventListener("change", () => {
+  if (encFileInput.files[0]) {
+    selectedFile = encFileInput.files[0];
+    encFileText.textContent = `${selectedFile.name} — ${(selectedFile.size / 1024 / 1024).toFixed(1)} Mo`;
+    decryptBtn.disabled = false;
+  }
+});
+
+function showLog(msg, isError) {
+  playerLog.hidden = false;
+  playerLog.className = isError ? "log error" : "log success";
+  playerLog.textContent = msg;
+}
+
+decryptBtn.addEventListener("click", async () => {
+  if (!selectedFile || !videoId || !token) return;
+  decryptBtn.disabled = true;
+  showLog("Demande de la clé de déchiffrement au serveur…", false);
+
+  try {
+    const res = await fetch(`/videos/${videoId}/download-key`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json();
+    if (!res.ok) {
+      showLog(data.error || "Impossible d'obtenir la clé de déchiffrement.", true);
+      decryptBtn.disabled = false;
+      return;
+    }
+
+    showLog("Clé obtenue — déchiffrement local en cours…", false);
+
+    const keyBytes = Uint8Array.from(atob(data.key), (c) => c.charCodeAt(0));
+    const ivBytes = new Uint8Array(data.iv.match(/.{2}/g).map((b) => parseInt(b, 16)));
+    const fileBuf = await selectedFile.arrayBuffer();
+
+    const cryptoKey = await crypto.subtle.importKey("raw", keyBytes, { name: "AES-CBC" }, false, ["decrypt"]);
+    const decrypted = await crypto.subtle.decrypt({ name: "AES-CBC", iv: ivBytes }, cryptoKey, fileBuf);
+
+    const blob = new Blob([decrypted], { type: "video/mp4" });
+    const url = URL.createObjectURL(blob);
+    offlineVideo.src = url;
+    offlineVideo.play().catch(() => {});
+
+    showLog(`Déchiffré avec succès — clé valable jusqu'au ${new Date(data.expiresAt).toLocaleString("fr-FR")}`, false);
+  } catch (err) {
+    showLog("Échec du déchiffrement : " + err.message, true);
+  } finally {
+    decryptBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
