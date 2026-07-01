@@ -1,4 +1,4 @@
-# Zero-Trust HLS — Plateforme de streaming vidéo chiffré sur Azure (sans ACR)
+# Zero-Trust HLS - Plateforme de streaming vidéo chiffré sur Azure (sans ACR)
 
 Plateforme complète : **authentification** (Admin / Utilisateur / Invité éphémère), **upload vidéo
 avec segmentation HLS + chiffrement AES-128 automatiques**, **CRUD** vidéos/commentaires/utilisateurs,
@@ -7,7 +7,7 @@ Application Insights + Log Analytics). Aucun **Azure Container Registry** requis
 démarre sur l'image publique `node:20-alpine` et télécharge le code applicatif depuis Blob Storage.
 Tout se déploie depuis **Azure Cloud Shell en PowerShell**, ou via le pipeline CI/CD GitHub Actions fourni.
 
-Ce document répond au cahier des charges *« Architecture Zero-Trust — Pipeline CDN Streaming
+Ce document répond au cahier des charges *« Architecture Zero-Trust - Pipeline CDN Streaming
 Chiffré »* (Pôle 2 · Sujet A). La correspondance section par section est donnée en §0.
 
 ---
@@ -21,16 +21,16 @@ Chiffré »* (Pôle 2 · Sujet A). La correspondance section par section est don
 | §6 Chiffrement AES-128 | ✅ AES-128 CBC standard HLS, clé jamais dérivée d'un mot de passe, jamais stockée à côté des segments | `POST /upload` |
 | §7 Key Server (F-KS-01 à F-KS-09) | ✅ toutes les fonctionnalités, voir tableau §7 ci-dessous | `server.js` |
 | §8 Authentification & tokens temporaires | ✅ jeton de session (login) + jeton clé dérivé, court, scopé à une vidéo | `signSessionToken` / `signKeyToken` |
-| §9 CDN & distribution | ⚠️ partiel — voir écarts §0.1 | Blob Storage public en lieu de CDN dédié |
-| §10 Stack technique Azure | ✅ sauf Private Endpoint / Redis / Front Door — voir écarts | `terraform/main.tf` |
+| §9 CDN & distribution | ⚠️ partiel - voir écarts §0.1 | Blob Storage public en lieu de CDN dédié |
+| §10 Stack technique Azure | ✅ sauf Private Endpoint / Redis / Front Door - voir écarts | `terraform/main.tf` |
 | §11 Infrastructure as Code | ✅ Terraform complet, `plan`/`apply` reproductibles | `terraform/` |
-| §12 Conteneurisation Docker | ⚠️ remplacé par un mécanisme équivalent sans ACR — voir §0.1 | `keyserver/Dockerfile` (test local) |
+| §12 Conteneurisation Docker | ⚠️ remplacé par un mécanisme équivalent sans ACR - voir §0.1 | `keyserver/Dockerfile` (test local) |
 | §13 Sécurité Zero-Trust par couche | ✅ identité managée partout, RBAC, TLS, secrets hors code | `terraform/main.tf` |
 | **§14 Observabilité, logs & audit** | ✅ voir §14 ci-dessous | Application Insights + Table `AuditLog` |
 | **§15 CI/CD du pipeline IaC** | ✅ voir §15 ci-dessous | `.github/workflows/iac.yml` |
 | §16 Modèle de données | ✅ adapté (Table Storage au lieu d'une base applicative dédiée) | Tables `Users`, `Comments`, `RevokedTokens`, `AuditLog` |
-| §17 Exigences non fonctionnelles | ✅ sauf disponibilité 99,9 % (hors périmètre démo étudiant) | — |
-| §21 Critères d'évaluation | ✅ tous démontrables (voir §19 scénario de démo) | — |
+| §17 Exigences non fonctionnelles | ✅ sauf disponibilité 99,9 % (hors périmètre démo étudiant) | - |
+| §21 Critères d'évaluation | ✅ tous démontrables (voir §19 scénario de démo) | - |
 
 ### 0.1 Écarts assumés par rapport au cahier des charges (et pourquoi)
 
@@ -40,11 +40,11 @@ que la démo peut se faire en local. Ce projet va plus loin : il est **réelleme
 
 | Cahier des charges | Ici | Raison |
 |---|---|---|
-| Azure Front Door / CDN dédié avec règles de cache différenciées | Lecture publique directe depuis Blob Storage (`container_access_type = "blob"`) | Front Door Premium n'entre pas dans le crédit étudiant ; le comportement recherché (playlist/segments cacheables, clé jamais cacheable) est déjà obtenu via les en-têtes `Cache-Control: no-store` sur `/keys/*` — un Front Door/CDN peut être ajouté devant sans changer le Key Server (extension documentée) |
+| Azure Front Door / CDN dédié avec règles de cache différenciées | Lecture publique directe depuis Blob Storage (`container_access_type = "blob"`) | Front Door Premium n'entre pas dans le crédit étudiant ; le comportement recherché (playlist/segments cacheables, clé jamais cacheable) est déjà obtenu via les en-têtes `Cache-Control: no-store` sur `/keys/*` - un Front Door/CDN peut être ajouté devant sans changer le Key Server (extension documentée) |
 | Private Endpoint / réseau totalement privé pour Storage et Key Server | Storage et Container App exposés publiquement, mais protégés par identité managée + RBAC + JWT | VNet + Private Endpoint ont un coût et une complexité disproportionnés pour une démo ; le contenu exposé publiquement est **chiffré** (segments) ou **non sensible** (playlist), jamais la clé |
 | Azure Cache for Redis pour la liste de révocation | Table Storage (`RevokedTokens`) | Redis Cache a un coût fixe horaire élevé pour un compte étudiant ; Table Storage offre la même sémantique (lookup par clé) pour le volume d'une démo |
 | JWT asymétrique RS256 (Core Auth externe signe, Key Server vérifie) | JWT HS256 avec secret partagé interne | Le cahier des charges suppose un Core Auth séparé (Pôle 1, NestJS) ; ici l'authentification et la délivrance de clé sont dans le **même service**, donc un secret partagé est suffisant et plus simple à opérer sans dégrader le modèle de menace (le secret ne quitte jamais le Container App) |
-| Azure Container Registry pour les images Docker | Aucun ACR — voir §"Pourquoi ça fonctionne sans ACR" | Contrainte explicite de la demande initiale de ce projet |
+| Azure Container Registry pour les images Docker | Aucun ACR - voir §"Pourquoi ça fonctionne sans ACR" | Contrainte explicite de la demande initiale de ce projet |
 | Rotation de clé par segment | Une clé par vidéo (Lot 0 explicitement suffisant selon la FAQ §23 du cahier des charges) | Conforme au périmètre Lot 0 |
 
 ---
@@ -84,8 +84,8 @@ Contributor`, `Storage Table Data Contributor`, `Key Vault Secrets Officer`).
 | Rôle | Vidéos | Commentaires | Utilisateurs | Audit | Téléchargement |
 |---|---|---|---|---|---|
 | **admin** (Professionnel) | CRUD complet (upload, renommer, supprimer) | modération (suppression de tout commentaire) | lecture + suppression de comptes | lecture du journal complet | approuve/refuse les demandes |
-| **user** (Utilisateur final) | lecture seule (visionnage) | CRUD sur ses propres commentaires | — | — | peut demander une autorisation |
-| **guest** (éphémère) | lecture seule | CRUD sur ses propres commentaires | — | — | peut demander une autorisation ; purgé à la déconnexion |
+| **user** (Utilisateur final) | lecture seule (visionnage) | CRUD sur ses propres commentaires | - | - | peut demander une autorisation |
+| **guest** (éphémère) | lecture seule | CRUD sur ses propres commentaires | - | - | peut demander une autorisation ; purgé à la déconnexion |
 
 Le compte `admin` est créé automatiquement au premier démarrage (identifiant/mot de passe générés
 par Terraform, affichés à la fin de `deploy.ps1`).
@@ -102,12 +102,12 @@ génère **une clé AES-128 par segment** :
 - Chaque clé de segment est stockée séparément dans Key Vault (`hls-key-{videoId}-{index}`).
 - **Rotation automatique** (`rotateSegmentKeys`) : tous les segments sont déchiffrés puis rechiffrés
   avec des clés et IV entièrement nouveaux :
-  - après l'expiration d'une session de lecture (jeton clé de 120s + 5s de marge) — planifiée à
+  - après l'expiration d'une session de lecture (jeton clé de 120s + 5s de marge) - planifiée à
     chaque `POST /videos/:id/key-token`, c'est-à-dire à chaque lecture ;
   - après l'approbation d'une demande de téléchargement.
 
   Une fois la rotation effectuée, les anciennes clés délivrées (par exemple interceptées ou mises en
-  cache par un client malveillant) ne permettent plus de déchiffrer les segments stockés — la
+  cache par un client malveillant) ne permettent plus de déchiffrer les segments stockés - la
   fenêtre d'exploitation d'une clé volée est donc limitée à la durée de la session qui l'a obtenue.
 
 > **Limite connue documentée** : la planification de rotation utilise `setTimeout` en mémoire dans
@@ -133,7 +133,7 @@ génère **une clé AES-128 par segment** :
 4. L'utilisateur voit la pop-up passer à *« Autorisation accordée »*, télécharge le fichier `.enc`,
    puis ouvre **`offline-player.html`** pour le lire : cette page demande la clé de déchiffrement au
    serveur (`GET /videos/:id/download-key`), déchiffre le fichier **entièrement dans le navigateur**
-   (Web Crypto API, `AES-CBC`), et lit la vidéo en clair localement — le fichier en clair n'est
+   (Web Crypto API, `AES-CBC`), et lit la vidéo en clair localement - le fichier en clair n'est
    jamais renvoyé au serveur.
 5. Passé le délai d'expiration, `download-key` répond `410 Gone` (la clé n'existe plus ou n'est plus
    accessible dans Key Vault, en plus d'un contrôle applicatif sur `downloadKeyExpiresAt`) : le
@@ -143,7 +143,7 @@ génère **une clé AES-128 par segment** :
 ## 3. Flux de lecture protégée (conforme §4.1 du cahier des charges)
 
 1. L'utilisateur authentifié (jeton de session obtenu au login) demande la playlist `.m3u8`
-2. La playlist est servie publiquement — elle contient **une directive `#EXT-X-KEY` par segment**,
+2. La playlist est servie publiquement - elle contient **une directive `#EXT-X-KEY` par segment**,
    chacune référençant l'URI de sa propre clé, jamais la clé elle-même
 3. `hls.js` demande d'abord un **jeton clé** court (`POST /videos/:id/key-token`, réservé aux
    sessions authentifiées), puis appelle `GET /keys/:id/:segIndex` pour chaque segment avec ce jeton
@@ -199,7 +199,7 @@ Hac-De/
 └── README.md
 ```
 
-## 5. Déploiement (Azure Cloud Shell — PowerShell)
+## 5. Déploiement (Azure Cloud Shell - PowerShell)
 
 1. Ouvrez **Azure Cloud Shell** et choisissez **PowerShell**.
 2. Importez ce projet :
@@ -234,7 +234,7 @@ node server.js
 ```
 
 `APP_PACKAGE_URL` pointe vers le `.zip` du code, uploadé par Terraform
-(`azurerm_storage_blob.app_package`) dans un container Blob en lecture publique — le code n'a aucun
+(`azurerm_storage_blob.app_package`) dans un container Blob en lecture publique - le code n'a aucun
 secret en dur (tous les secrets viennent de variables d'environnement / Key Vault / secrets Container App).
 
 ## 7. Fonctionnalités du Key Server (F-KS-01 à F-KS-09)
@@ -264,23 +264,23 @@ DownloadRequests   PartitionKey=videoId    RowKey=requestId(uuid)   {username, s
 Les métadonnées de vidéo (titre, propriétaire, date, nombre de segments) sont stockées en
 `meta.json` à côté des segments dans `hls-segments/{videoId}/meta.json`. Les clés, elles, restent
 exclusivement dans Key Vault :
-- `hls-key-{videoId}-{segmentIndex}` — une clé de streaming par segment, rotée automatiquement
-- `dl-key-{requestId}` — une clé d'export par téléchargement approuvé, avec expiration native Key Vault
+- `hls-key-{videoId}-{segmentIndex}` - une clé de streaming par segment, rotée automatiquement
+- `dl-key-{requestId}` - une clé d'export par téléchargement approuvé, avec expiration native Key Vault
 
 ## 14. Observabilité, logs & audit
 
 | ID | Fonctionnalité | Implémentation |
 |---|---|---|
-| F-OBS-01 | Logs structurés du Key Server | `console.log(JSON.stringify(...))` sur chaque requête et chaque événement d'audit — capté par Container Apps → Log Analytics (table `ContainerAppConsoleLogs_CL`) |
+| F-OBS-01 | Logs structurés du Key Server | `console.log(JSON.stringify(...))` sur chaque requête et chaque événement d'audit - capté par Container Apps → Log Analytics (table `ContainerAppConsoleLogs_CL`) |
 | F-OBS-02 | Dashboard | Requêtable via **Application Insights** (`requests`, `customEvents`) ou Log Analytics (KQL) : nombre de délivrances de clé/minute, taux 401/403, latence |
-| F-OBS-03 | Alertes | Base prête via Application Insights (alertes sur `customEvents` où `result != "granted"`) — à activer dans le portail Azure selon les seuils souhaités |
+| F-OBS-03 | Alertes | Base prête via Application Insights (alertes sur `customEvents` où `result != "granted"`) - à activer dans le portail Azure selon les seuils souhaités |
 | F-OBS-04 | Consultation applicative | Page **Administration → Journal d'audit** du site : liste les 100-500 derniers événements (login, logout, upload, delete, commentaires, délivrances de clé) directement depuis la Table `AuditLog` |
 | F-OBS-05 | Traces distribuées | `applicationinsights` SDK Node, auto-collecte requêtes/dépendances/exceptions, connecté au même workspace Log Analytics que Storage et Key Vault |
-| F-OBS-06 | Rétention | Log Analytics configuré à 30 jours (`retention_in_days`) ; Table Storage n'a pas de TTL automatique — à ajouter en Lot 1 (purge périodique via Azure Function planifiée) si besoin de conformité RGPD stricte |
+| F-OBS-06 | Rétention | Log Analytics configuré à 30 jours (`retention_in_days`) ; Table Storage n'a pas de TTL automatique - à ajouter en Lot 1 (purge périodique via Azure Function planifiée) si besoin de conformité RGPD stricte |
 
 Toute délivrance de clé (`granted`/`denied`) et toute action sensible (login, logout, upload,
 suppression, CRUD commentaires) passe par la fonction unique `audit()` dans `server.js`, qui écrit
-simultanément dans les trois couches ci-dessus — c'est la même source de vérité qui alimente le
+simultanément dans les trois couches ci-dessus - c'est la même source de vérité qui alimente le
 dashboard Admin, Application Insights et Log Analytics.
 
 ## 15. CI/CD du pipeline IaC
@@ -319,7 +319,7 @@ az role assignment create --assignee <appId> --role Contributor \
 > credentials) reste pleinement fonctionnel et couvre déjà l'essentiel du critère §15 ; `plan`/`apply`
 > automatisés restent une extension optionnelle documentée.
 
-## 16. Sécurité Zero-Trust — synthèse par couche (§13)
+## 16. Sécurité Zero-Trust - synthèse par couche (§13)
 
 | Couche | Mesure appliquée ici |
 |---|---|
@@ -332,7 +332,7 @@ az role assignment create --assignee <appId> --role Contributor \
 | Surface d'exposition | Seul le Container App est exposé publiquement ; le stockage brut (`uploads`) reste privé |
 | Révocation | Table `RevokedTokens` consultée à chaque requête de session ; logout = révocation immédiate |
 | Journalisation | 100 % des délivrances de clé et actions sensibles auditées (voir §14) |
-| Moindre privilège | Rôles RBAC dédiés et minimaux : `Storage Blob Data Contributor`, `Storage Table Data Contributor`, `Key Vault Secrets Officer` — scope limité au compte de stockage / coffre concerné |
+| Moindre privilège | Rôles RBAC dédiés et minimaux : `Storage Blob Data Contributor`, `Storage Table Data Contributor`, `Key Vault Secrets Officer` - scope limité au compte de stockage / coffre concerné |
 
 ## 17. Coûts (compte Azure Students)
 
@@ -350,11 +350,11 @@ le même workspace, pas de ressource facturée séparément au-delà de l'ingest
   az containerapp logs show --name <container_app_name> --resource-group rg-ztstream-demo --follow
   ```
 - **Mot de passe admin perdu** : `terraform output -raw admin_password` depuis `terraform/`.
-- **Modifier le code et redéployer** : relancez `./scripts/deploy.ps1` — Terraform détecte le
+- **Modifier le code et redéployer** : relancez `./scripts/deploy.ps1` - Terraform détecte le
   changement du `.zip` (`filemd5`) et déploie une nouvelle révision.
-- **Un compte invité ne peut pas se reconnecter** : c'est voulu — les comptes invités sont éphémères
+- **Un compte invité ne peut pas se reconnecter** : c'est voulu - les comptes invités sont éphémères
   et supprimés à la déconnexion, avec purge de leurs propres vidéos de test.
 - **Vérifier qu'une vidéo est bien chiffrée** : `./scripts/verify-encryption.ps1 -VideoId <uuid>`
-  (voir §3bis) — utile après un upload pour prouver le chiffrement sans faire confiance à l'interface.
+  (voir §3bis) - utile après un upload pour prouver le chiffrement sans faire confiance à l'interface.
 - **Un fichier téléchargé ne se lit plus** : c'est voulu si le délai `DOWNLOAD_KEY_TTL_HOURS` (24h par
-  défaut) est dépassé — refaites une demande de téléchargement depuis la plateforme.
+  défaut) est dépassé - refaites une demande de téléchargement depuis la plateforme.
