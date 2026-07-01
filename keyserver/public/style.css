@@ -1097,13 +1097,11 @@ video {
   white-space: nowrap;
 }
 
-/* ✅ MODAL CORRIGÉ : masqué par défaut */
 .modal-overlay {
   position: fixed;
   inset: 0;
   background: rgba(6, 8, 10, 0.72);
   display: none;
-  /* ← Changement clé : masqué par défaut */
   align-items: center;
   justify-content: center;
   z-index: 1000;
@@ -1111,9 +1109,12 @@ video {
   backdrop-filter: blur(2px);
 }
 
-/* ✅ Classe pour afficher le modal (ajoutée par JavaScript) */
 .modal-overlay.active {
   display: flex;
+}
+
+.modal-overlay[hidden] {
+  display: none !important;
 }
 
 .modal-card {

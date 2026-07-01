@@ -500,20 +500,20 @@ async function loadAudit() {
 document.getElementById("refreshAuditBtn").addEventListener("click", loadAudit);
 
 // ============================================================
-// DEMARRAGE
-// ============================================================
-renderAuthState();
-if (state.token) loadVideos();
-
-// ============================================================
 // TELECHARGEMENT — popup d'autorisation, statut, admin
 // ============================================================
 const downloadBtn = document.getElementById("downloadBtn");
 const downloadModalOverlay = document.getElementById("downloadModalOverlay");
 const downloadModalBody = document.getElementById("downloadModalBody");
 
-function openDownloadModal() { downloadModalOverlay.hidden = false; }
-function closeDownloadModal() { downloadModalOverlay.hidden = true; }
+function openDownloadModal() {
+  downloadModalOverlay.hidden = false;
+  downloadModalOverlay.classList.add("active");
+}
+function closeDownloadModal() {
+  downloadModalOverlay.hidden = true;
+  downloadModalOverlay.classList.remove("active");
+}
 document.getElementById("downloadModalClose").addEventListener("click", closeDownloadModal);
 downloadModalOverlay.addEventListener("click", (e) => { if (e.target === downloadModalOverlay) closeDownloadModal(); });
 
@@ -638,3 +638,10 @@ async function loadDownloadRequests() {
   }
 }
 document.getElementById("refreshDownloadReqBtn").addEventListener("click", loadDownloadRequests);
+
+// ============================================================
+// DEMARRAGE
+// ============================================================
+closeDownloadModal();
+renderAuthState();
+if (state.token) loadVideos();
