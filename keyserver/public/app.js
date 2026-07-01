@@ -131,7 +131,7 @@ document.querySelectorAll(".navlink").forEach((btn) => {
     btn.classList.add("active");
     document.querySelectorAll(".tabpanel").forEach((p) => (p.hidden = true));
     document.getElementById(`tab-${btn.dataset.tab}`).hidden = false;
-    if (btn.dataset.tab === "admin") { loadAdminVideos(); loadUsers(); loadAudit(); }
+    if (btn.dataset.tab === "admin") { loadAdminVideos(); loadUsers(); loadAudit(); loadDownloadRequests(); }
   });
 });
 
@@ -229,14 +229,15 @@ async function playVideo(v) {
     });
     hls.loadSource(v.playlistUrl);
     hls.attachMedia(videoEl);
-    hls.on(Hls.Events.MANIFEST_PARSED, () => videoEl.play().catch(() => {}));
+    hls.on(Hls.Events.MANIFEST_PARSED, () => videoEl.play().catch(() => { }));
   } else if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
     videoEl.src = v.playlistUrl;
-    videoEl.play().catch(() => {});
+    videoEl.play().catch(() => { });
   }
 
   document.getElementById("commentsBox").hidden = false;
   loadComments(v.videoId);
+  downloadBtn.hidden = false;
 }
 
 // ============================================================
@@ -599,13 +600,6 @@ async function downloadEncryptedFile(videoId) {
 
 downloadBtn.addEventListener("click", refreshDownloadModal);
 
-// Afficher le bouton Télécharger dès qu'une vidéo est chargée dans le lecteur
-const _origPlayVideo = playVideo;
-playVideo = async function (v) {
-  await _origPlayVideo(v);
-  downloadBtn.hidden = false;
-};
-
 // ============================================================
 // ADMIN : DEMANDES DE TELECHARGEMENT
 // ============================================================
@@ -644,6 +638,3 @@ async function loadDownloadRequests() {
   }
 }
 document.getElementById("refreshDownloadReqBtn").addEventListener("click", loadDownloadRequests);
-
-const _origAdminTabClick = document.querySelector('.navlink[data-tab="admin"]');
-if (_origAdminTabClick) _origAdminTabClick.addEventListener("click", loadDownloadRequests);
